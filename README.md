@@ -131,6 +131,8 @@ python -m domovyk_quest          # wake.mode=vosk за замовчування�
 | `audio.input_device` / `output_device` | мікрофон / колонка (`null`=за замовч., індекс або назва) |
 | `audio.vad_rms_threshold` | поріг гучності «гравець говорить» |
 | `wake.mode` | `vosk` \| `gemini` \| `manual` |
+| `session.half_duplex` | поки агент говорить — мікрофон не йде в модель (захист від відлуння; типово `true`) |
+| `session.echo_guard_ms` | пауза після мовлення агента перед відкриттям мікрофона |
 | `session.inactivity_timeout_s` | скільки терпіти тишу перед сном |
 | `session.max_duration_s` | запобіжник максимальної тривалості |
 
@@ -209,6 +211,8 @@ journalctl -u domovyk-quest -f      # дивитись журнал
 | `sounddevice/PortAudio недоступний` | `sudo apt install libportaudio2`, `pip install sounddevice` |
 | Не знайдено ключ API | `export GEMINI_API_KEY=...` або заповни `.env` |
 | Не чує кодове слово (vosk) | перевір мікрофон (`--list-devices`), додай відмінки у `wake_words`, підніми `wake.fuzzy_threshold` нижче |
+| **Агент перебиває сам себе / не договорює, «розмова сама із собою»** | акустичне відлуння: колонка → мікрофон. Має бути `session.half_duplex: true` (типово). Якщо все одно — підніми `session.echo_guard_ms` (напр. 700), зменш гучність колонки, віддали мікрофон від динаміка або візьми мікрофон з апаратним AEC |
+| «Гравцем» розпізнається голос самого агента | те саме — відлуння; див. рядок вище (`half_duplex`) |
 | Лялька говорить, але тихо/рве звук | зменш навантаження, перевір `output_device`, гучність ALSA (`alsamixer`) |
 | Не тією мовою | переконайся, що `style`/`persona` наголошують українську; голос лишай із підтримкою uk |
 

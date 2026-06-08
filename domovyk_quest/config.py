@@ -56,6 +56,11 @@ class SessionCfg:
     max_duration_s: float = 300.0
     cooldown_s: float = 3.0
     greeting_on_wake: bool = True
+    # Напівдуплекс: поки агент говорить, мікрофон не йде в модель (захист від
+    # акустичного відлуння без апаратного AEC). Вимкни лише за наявності AEC,
+    # щоб дозволити перебивання (barge-in).
+    half_duplex: bool = True
+    echo_guard_ms: int = 400  # пауза після мовлення агента перед відкриттям мікрофона
 
 
 @dataclass(frozen=True)

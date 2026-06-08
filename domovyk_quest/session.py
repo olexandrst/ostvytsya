@@ -37,6 +37,26 @@ def _normalize(text: str) -> str:
     return "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in text)
 
 
+def _audio_from_response(response) -> bytes:
+    """Зібрати лише аудіо з частин відповіді (ігноруючи text/thought).
+
+    Замінює response.data, який сипле попередженням 'non-data parts', коли
+    модель повертає ще й текст чи 'thought'-частини.
+    """
+    sc = getattr(response, "server_content", None)
+    if sc is None:
+        return b""
+    mt = getattr(sc, "model_turn", None)
+    if mt is None or not getattr(mt, "parts", None):
+        return b""
+    chunks = []
+    for part in mt.parts:
+        inline = getattr(part, "inline_data", None)
+        if inline is not None and getattr(inline, "data", None):
+            chunks.append(inline.data)
+    return b"".join(chunks)
+
+
 @dataclass
 class _State:
     last_user_voice: float = field(default_factory=time.monotonic)
@@ -44,6 +64,9 @@ class _State:
     model_buf: str = ""
     won: bool = False
     outcome: Optional[Outcome] = None
+    # Напівдуплекс: чи агент зараз говорить, і коли він востаннє був активний.
+    agent_speaking: bool = True
+    speaking_ended_at: float = 0.0
 
 
 class QuestSession:
@@ -121,8 +144,30 @@ class QuestSession:
         rate = self.cfg.audio.input_sample_rate
         threshold = self.cfg.audio.vad_rms_threshold
         mime = f"audio/pcm;rate={rate}"
+        half_duplex = self.cfg.session.half_duplex
+        guard_s = self.cfg.session.echo_guard_ms / 1000.0
+        was_blocking = False
         while not end.is_set():
             data = await self.audio.read()
+
+            # Напівдуплекс: поки агент говорить (або щойно договорив), НЕ шлемо
+            # мікрофон у модель — інакше вона чує власне відлуння з колонки,
+            # серверний VAD приймає це за перебивання і модель уривається.
+            if half_duplex:
+                speaking = state.agent_speaking or not self.audio.output_idle
+                if speaking:
+                    state.speaking_ended_at = time.monotonic()
+                    was_blocking = True
+                    continue
+                if time.monotonic() - state.speaking_ended_at < guard_s:
+                    was_blocking = True
+                    continue
+                if was_blocking:
+                    # Мікрофон щойно «відкрився» — викидаємо рештки відлуння.
+                    self.audio.drain_mic()
+                    was_blocking = False
+                    continue
+
             if rms(data) >= threshold:
                 state.last_user_voice = time.monotonic()
             try:
@@ -144,9 +189,12 @@ class QuestSession:
                 got_message = False
                 async for response in session.receive():
                     got_message = True
-                    audio_bytes = getattr(response, "data", None)
+                    audio_bytes = _audio_from_response(response)
                     if audio_bytes:
                         self.audio.play(audio_bytes)
+                        state.agent_speaking = True
+                        # Поки агент говорить — не вважаємо це тишею гравця.
+                        state.last_user_voice = time.monotonic()
 
                     sc = getattr(response, "server_content", None)
                     if sc is None:
@@ -170,6 +218,8 @@ class QuestSession:
                         self.audio.stop_playback()
 
                     if getattr(sc, "turn_complete", False):
+                        # Хід моделі завершено — агент договорив.
+                        state.agent_speaking = False
                         if transcript:
                             if state.user_buf.strip():
                                 log.info("👤 Гравець: %s", state.user_buf.strip())
