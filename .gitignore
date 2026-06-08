@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Секрети
+.env
+
+# Моделі Vosk (важкі, завантажуються окремо — див. README)
+models/*
+!models/.gitkeep
+
+# Аудіо-дампи / тимчасове
+*.wav
+*.raw
+*.log
