@@ -13,7 +13,10 @@ env/
 models/*
 !models/.gitkeep
 
+# Логи
+logs/
+*.log
+
 # Аудіо-дампи / тимчасове
 *.wav
 *.raw
-*.log

@@ -67,6 +67,7 @@ class _State:
     # Напівдуплекс: чи агент зараз говорить, і коли він востаннє був активний.
     agent_speaking: bool = True
     speaking_ended_at: float = 0.0
+    got_audio: bool = False  # чи модель уже щось сказала (для страхування вітання)
 
 
 class QuestSession:
@@ -103,21 +104,22 @@ class QuestSession:
                 model=self.cfg.gemini.model, config=self._live_config()
             ) as session:
                 log.info("Сесію Gemini Live відкрито (голос: %s)", self.character.voice)
-                if self.cfg.session.greeting_on_wake:
-                    await session.send_client_content(
-                        turns=types.Content(
-                            role="user", parts=[types.Part(text=GREETING_TRIGGER)]
-                        ),
-                        turn_complete=True,
-                    )
-
                 state = _State()
                 end = asyncio.Event()
+
+                # Персонаж має заговорити ПЕРШИМ, щойно дитина сказала кодове слово.
+                if self.cfg.session.greeting_on_wake:
+                    await self._send_greeting(session)
+
                 tasks = [
                     asyncio.create_task(self._send_loop(session, state, end)),
                     asyncio.create_task(self._recv_loop(session, state, end)),
                     asyncio.create_task(self._watchdog(state, end)),
                 ]
+                if self.cfg.session.greeting_on_wake:
+                    tasks.append(
+                        asyncio.create_task(self._greeting_nudge(session, state, end))
+                    )
                 try:
                     await asyncio.wait_for(
                         end.wait(), timeout=self.cfg.session.max_duration_s
@@ -137,6 +139,35 @@ class QuestSession:
         except Exception as exc:  # noqa: BLE001
             log.error("Помилка сесії Gemini Live: %s", exc)
             return Outcome.ERROR
+
+    # ── проактивне вітання ───────────────────────────────────────────────────
+
+    async def _send_greeting(self, session) -> None:
+        await session.send_client_content(
+            turns=types.Content(role="user", parts=[types.Part(text=GREETING_TRIGGER)]),
+            turn_complete=True,
+        )
+
+    async def _greeting_nudge(self, session, state: _State, end: asyncio.Event) -> None:
+        """Страховка: якщо персонаж не заговорив сам — повторно спонукаємо його.
+
+        Іноді native-audio модель «проспинає» перший текстовий сигнал і чекає
+        на голос дитини. Щоб персонаж гарантовано почав розмову першим, за
+        кілька секунд тиші повторюємо сигнал (кілька разів).
+        """
+        for _ in range(3):
+            try:
+                await asyncio.sleep(self.cfg.session.greeting_nudge_s)
+            except asyncio.CancelledError:
+                raise
+            if end.is_set() or state.got_audio:
+                return
+            log.info("Персонаж іще мовчить — повторно спонукаю привітатися…")
+            try:
+                await self._send_greeting(session)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("greeting nudge: %s", exc)
+                return
 
     # ── мікрофон → модель ────────────────────────────────────────────────────
 
@@ -193,6 +224,7 @@ class QuestSession:
                     if audio_bytes:
                         self.audio.play(audio_bytes)
                         state.agent_speaking = True
+                        state.got_audio = True
                         # Поки агент говорить — не вважаємо це тишею гравця.
                         state.last_user_voice = time.monotonic()
 

@@ -152,10 +152,13 @@ true` звужує розпізнавання до кодових слів — �
 | `wake.mode` | `vosk` \| `gemini` \| `manual` |
 | `wake.fuzzy_threshold` | толерантність нечіткого збігу кодового слова (0..1) |
 | `wake.vosk_grammar` | звузити Vosk до кодових слів (лише для слів зі словника) |
+| `session.greeting_on_wake` | персонаж вітається **першим** одразу після кодового слова (типово `true`) |
+| `session.greeting_nudge_s` | якщо персонаж мовчить — за стільки секунд повторити спонукання |
 | `session.half_duplex` | поки агент говорить — мікрофон не йде в модель (захист від відлуння; типово `true`) |
 | `session.echo_guard_ms` | пауза після мовлення агента перед відкриттям мікрофона |
 | `session.inactivity_timeout_s` | скільки терпіти тишу перед сном |
 | `session.max_duration_s` | запобіжник максимальної тривалості |
+| `logging.file` / `logging.dir` | писати лог у файл `./logs/ostvytsya_YYYY-MM-DD.log` (дозапис) |
 
 **`characters/*.yaml`** — персонаж і сценарій: `display_name`, `voice`, `wake_words`,
 `win_word`, `persona`, `style`, `intro`, `questions` (текст + `accepted` + `hints` +
@@ -224,6 +227,16 @@ journalctl -u domovyk-quest -f      # дивитись журнал
 - Для дитячої інсталяції рекомендовано `vosk` + розумні тайм-аути (вже виставлені).
 
 ---
+
+## Логи
+
+Окрім консолі, усе пишеться у файл **`./logs/ostvytsya_YYYY-MM-DD.log`** (щодня —
+новий файл; опівночі агент сам перемикається). Після рестарту в той самий день
+файл **дозаписується**, а не перезаписується. Вимкнути: `logging.file: false`.
+
+```bash
+tail -f logs/ostvytsya_$(date +%F).log      # стежити за сьогоднішнім логом
+```
 
 ## Розв'язання проблем
 

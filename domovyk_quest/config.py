@@ -56,7 +56,8 @@ class SessionCfg:
     inactivity_timeout_s: float = 45.0
     max_duration_s: float = 300.0
     cooldown_s: float = 3.0
-    greeting_on_wake: bool = True
+    greeting_on_wake: bool = True       # персонаж вітається першим одразу після кодового слова
+    greeting_nudge_s: float = 4.0       # якщо мовчить — за стільки секунд повторити спонукання
     # Напівдуплекс: поки агент говорить, мікрофон не йде в модель (захист від
     # акустичного відлуння без апаратного AEC). Вимкни лише за наявності AEC,
     # щоб дозволити перебивання (barge-in).
@@ -68,6 +69,8 @@ class SessionCfg:
 class LoggingCfg:
     level: str = "INFO"
     transcript: bool = True
+    file: bool = True          # писати також у файл ./logs/ostvytsya_YYYY-MM-DD.log
+    dir: str = "logs"          # тека для лог-файлів
 
 
 # ── Персонаж / сценарій ──────────────────────────────────────────────────────

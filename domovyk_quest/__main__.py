@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 import sys
 
 from .config import ConfigError, load_config
@@ -35,13 +34,9 @@ def _parse_args(argv=None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def _setup_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s  %(message)s",
-        datefmt="%H:%M:%S",
-    )
-    logging.getLogger("google_genai").setLevel(logging.WARNING)
+def _setup_logging(cfg) -> None:
+    from .logsetup import configure_logging
+    configure_logging(cfg.level, to_file=cfg.file, log_dir=cfg.dir)
 
 
 def main(argv=None) -> int:
@@ -66,7 +61,7 @@ def main(argv=None) -> int:
         print(f"❌ Помилка конфігурації: {exc}", file=sys.stderr)
         return 2
 
-    _setup_logging(cfg.logging.level)
+    _setup_logging(cfg.logging)
 
     # Імпортуємо тут, щоб --list-devices/--help працювали без важких залежностей.
     from .orchestrator import Orchestrator
