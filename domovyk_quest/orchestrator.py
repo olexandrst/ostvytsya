@@ -50,6 +50,15 @@ class Orchestrator:
             await self.audio.close()
             log.info("Агента зупинено.")
 
+    async def calibrate(self) -> None:
+        """Діагностика розпізнавання кодового слова (див. --calibrate)."""
+        await self.audio.start()
+        try:
+            await self.wake.calibrate(self.audio)
+        finally:
+            await self.wake.close()
+            await self.audio.close()
+
     def _report(self, outcome: Outcome) -> None:
         if outcome is Outcome.WON:
             log.info("🏆 Квест пройдено! Слово «%s» назване.", self.cfg.character.win_word)

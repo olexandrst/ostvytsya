@@ -46,8 +46,9 @@ class AudioCfg:
 class WakeCfg:
     mode: str = "vosk"  # vosk | gemini | manual
     vosk_model_path: str = "models/vosk-model-small-uk"
+    vosk_grammar: bool = False  # звузити розпізнавання до кодових слів (лише для слів у словнику Vosk)
     fuzzy: bool = True
-    fuzzy_threshold: float = 0.78
+    fuzzy_threshold: float = 0.70
 
 
 @dataclass(frozen=True)

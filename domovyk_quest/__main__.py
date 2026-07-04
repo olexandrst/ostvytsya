@@ -29,6 +29,8 @@ def _parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--model", help="модель Gemini (перекриває config)")
     p.add_argument("--log-level", help="DEBUG|INFO|WARNING|ERROR")
     p.add_argument("--once", action="store_true", help="один квест і вихід")
+    p.add_argument("--calibrate", action="store_true",
+                   help="показати, як детектор чує кодове слово (для налаштування wake_words)")
     p.add_argument("--list-devices", action="store_true", help="показати аудіопристрої й вийти")
     return p.parse_args(argv)
 
@@ -76,7 +78,10 @@ def main(argv=None) -> int:
         return 1
 
     try:
-        asyncio.run(orch.run_forever(once=args.once))
+        if args.calibrate:
+            asyncio.run(orch.calibrate())
+        else:
+            asyncio.run(orch.run_forever(once=args.once))
     except KeyboardInterrupt:
         print("\n👋 Зупинено користувачем.")
     return 0
