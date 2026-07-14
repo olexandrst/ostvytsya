@@ -37,6 +37,46 @@ def _normalize(text: str) -> str:
     return "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in text)
 
 
+def _summarize_response(response) -> str:
+    """Стислий дамп відповіді Live API для діагностики (рівень DEBUG).
+
+    Не виводить самі байти аудіо — лише їх кількість — щоб не заливати лог.
+    """
+    bits: list[str] = []
+    sc = getattr(response, "server_content", None)
+    if sc is not None:
+        parts_info = []
+        mt = getattr(sc, "model_turn", None)
+        if mt is not None and getattr(mt, "parts", None):
+            for part in mt.parts:
+                inline = getattr(part, "inline_data", None)
+                if inline is not None and getattr(inline, "data", None):
+                    parts_info.append(f"audio({len(inline.data)}b)")
+                elif getattr(part, "text", None):
+                    parts_info.append(f"text={part.text!r}")
+                elif getattr(part, "thought", None):
+                    parts_info.append("thought")
+                else:
+                    parts_info.append(f"other={part!r}")
+        bits.append(f"parts=[{', '.join(parts_info)}]")
+        for flag in ("turn_complete", "interrupted", "generation_complete"):
+            if getattr(sc, flag, False):
+                bits.append(flag)
+        it = getattr(sc, "input_transcription", None)
+        if it is not None and getattr(it, "text", None):
+            bits.append(f"input_transcription={it.text!r}")
+        ot = getattr(sc, "output_transcription", None)
+        if ot is not None and getattr(ot, "text", None):
+            bits.append(f"output_transcription={ot.text!r}")
+    else:
+        bits.append("server_content=None")
+    for attr in ("go_away", "usage_metadata", "tool_call", "tool_call_cancellation"):
+        val = getattr(response, attr, None)
+        if val is not None:
+            bits.append(f"{attr}={val}")
+    return " ".join(bits)
+
+
 def _audio_from_response(response) -> bytes:
     """Зібрати лише аудіо з частин відповіді (ігноруючи text/thought).
 
@@ -143,10 +183,12 @@ class QuestSession:
     # ── проактивне вітання ───────────────────────────────────────────────────
 
     async def _send_greeting(self, session) -> None:
-        await session.send_client_content(
-            turns=types.Content(role="user", parts=[types.Part(text=GREETING_TRIGGER)]),
-            turn_complete=True,
-        )
+        # send_client_content лише «підсаджує» історію в чергу й не гарантує
+        # швидкої відповіді (за офіційною документацією Live API — використовується
+        # для попереднього наповнення контексту, а не як реальний тригер мовлення).
+        # send_realtime_input трактує вхід як живу активність користувача (як мову)
+        # і надійно змушує native-audio модель відповісти голосом одразу.
+        await session.send_realtime_input(text=GREETING_TRIGGER)
 
     async def _greeting_nudge(self, session, state: _State, end: asyncio.Event) -> None:
         """Страховка: якщо персонаж не заговорив сам — повторно спонукаємо його.
@@ -220,6 +262,7 @@ class QuestSession:
                 got_message = False
                 async for response in session.receive():
                     got_message = True
+                    log.debug("Live-повідомлення: %s", _summarize_response(response))
                     audio_bytes = _audio_from_response(response)
                     if audio_bytes:
                         self.audio.play(audio_bytes)

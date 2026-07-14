@@ -92,5 +92,8 @@ def configure_logging(level: str, *, to_file: bool = True,
                 "Не вдалося відкрити лог-файл (%s) — пишу лише в консоль.", exc
             )
 
-    logging.getLogger("google_genai").setLevel(logging.WARNING)
-    logging.getLogger("websockets").setLevel(logging.WARNING)
+    # На DEBUG лишаємо внутрішні логери SDK видимими (мережева діагностика);
+    # інакше приглушуємо їхній звичайний «шум» до WARNING.
+    lib_level = logging.DEBUG if root.level <= logging.DEBUG else logging.WARNING
+    logging.getLogger("google_genai").setLevel(lib_level)
+    logging.getLogger("websockets").setLevel(lib_level)
