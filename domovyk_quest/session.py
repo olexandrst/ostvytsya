@@ -143,10 +143,12 @@ class QuestSession:
     # ── проактивне вітання ───────────────────────────────────────────────────
 
     async def _send_greeting(self, session) -> None:
-        await session.send_client_content(
-            turns=types.Content(role="user", parts=[types.Part(text=GREETING_TRIGGER)]),
-            turn_complete=True,
-        )
+        # send_client_content лише «підсаджує» історію в чергу й не гарантує
+        # швидкої відповіді (за офіційною документацією Live API — використовується
+        # для попереднього наповнення контексту, а не як реальний тригер мовлення).
+        # send_realtime_input трактує вхід як живу активність користувача (як мову)
+        # і надійно змушує native-audio модель відповісти голосом одразу.
+        await session.send_realtime_input(text=GREETING_TRIGGER)
 
     async def _greeting_nudge(self, session, state: _State, end: asyncio.Event) -> None:
         """Страховка: якщо персонаж не заговорив сам — повторно спонукаємо його.
