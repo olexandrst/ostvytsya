@@ -98,6 +98,10 @@ class Character:
     questions: tuple[Question, ...]
     win: str
     goodbye: str = ""
+    # Суворі заборони/надзавдання — виводяться НА ПОЧАТКУ системної інструкції
+    # (найвищий пріоритет). Напр., для квесту з фізичним пошуком: не озвучувати
+    # слова-відповіді, а лише слухати й підтверджувати.
+    directives: tuple[str, ...] = ()
     fallbacks: dict[str, str] = field(default_factory=dict)
 
 

@@ -46,13 +46,21 @@ def build_system_instruction(ch: Character) -> str:
         fb = "\n".join(f"  - {k}: {v}" for k, v in ch.fallbacks.items())
         fallbacks = f"\nОСОБЛИВІ СИТУАЦІЇ:\n{fb}\n"
 
+    directives = ""
+    if ch.directives:
+        dv = "\n".join(f"  ❗ {d.strip()}" for d in ch.directives)
+        directives = (
+            "\n‼️ НАЙГОЛОВНІШІ ПРАВИЛА (мають ПЕРЕВАГУ над усім іншим нижче):\n"
+            f"{dv}\n"
+        )
+
     n = len(ch.questions)
 
     return f"""\
 ТИ — ГОЛОСОВИЙ ПЕРСОНАЖ «{ch.display_name}». Це жива голосова розмова з дитиною
 14 років у парку історичної реконструкції «Оствиця» (Рівне). Ти НЕ асистент і
 НЕ згадуєш, що ти ШІ чи модель. Ти завжди лишаєшся у своєму образі.
-
+{directives}
 ХТО ТИ:
 {ch.persona.strip()}
 
