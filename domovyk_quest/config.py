@@ -63,6 +63,12 @@ class SessionCfg:
     # щоб дозволити перебивання (barge-in).
     half_duplex: bool = True
     echo_guard_ms: int = 400  # пауза після мовлення агента перед відкриттям мікрофона
+    # Живучість з'єднання Gemini Live: сервер обмежує тривалість одного WebSocket
+    # і зрідка закриває його (1011). Ці опції тримають довгий квест живим.
+    context_compression: bool = True   # стиснення контексту → довша сесія
+    session_resumption: bool = True    # відновлення сесії за handle після обриву
+    max_reconnects: int = 6            # стеля «мертвих» перепідключень поспіль
+    reconnect_backoff_s: float = 1.0   # базова пауза між спробами (× номер спроби)
 
 
 @dataclass(frozen=True)
