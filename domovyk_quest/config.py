@@ -98,6 +98,10 @@ class Character:
     questions: tuple[Question, ...]
     win: str
     goodbye: str = ""
+    # Суворі заборони/надзавдання — виводяться НА ПОЧАТКУ системної інструкції
+    # (найвищий пріоритет). Напр., для квесту з фізичним пошуком: не озвучувати
+    # слова-відповіді, а лише слухати й підтверджувати.
+    directives: tuple[str, ...] = ()
     fallbacks: dict[str, str] = field(default_factory=dict)
 
 
@@ -185,7 +189,7 @@ def load_config(
     if not char_path.is_absolute():
         char_path = (root / char_path).resolve()
 
-    character = _load_character(char_path)
+    character, char_raw = _load_character(char_path)
 
     cfg = AppConfig(
         gemini=gemini,
@@ -195,12 +199,32 @@ def load_config(
         logging=logging_cfg,
         character=character,
     )
+    # Порядок пріоритету: CLI > персонаж > config.yaml. Персонаж може нести
+    # власні рантайм-секції (напр. session:) — інший квест потребує інших пауз.
+    cfg = _apply_overrides(cfg, _character_runtime_overrides(char_raw))
     cfg = _apply_overrides(cfg, overrides)
     _validate(cfg)
     return cfg
 
 
-def _load_character(path: Path) -> Character:
+# Рантайм-секції, які файл персонажа може перевизначити поверх config.yaml.
+_RUNTIME_SECTIONS = ("gemini", "audio", "wake", "session", "logging")
+
+
+def _character_runtime_overrides(char_raw: dict[str, Any]) -> dict[str, Any]:
+    """Зібрати з файлу персонажа пласкі 'секція.поле' рантайм-перевизначення."""
+    out: dict[str, Any] = {}
+    for section in _RUNTIME_SECTIONS:
+        block = char_raw.get(section)
+        if isinstance(block, dict):
+            for key, value in block.items():
+                out[f"{section}.{key}"] = value
+    return out
+
+
+def _load_character(path: Path) -> tuple[Character, dict[str, Any]]:
+    """Повертає (персонаж, сирий YAML). Сирий словник потрібен для рантайм-
+    перевизначень персонажа (напр. блок session:)."""
     raw = _read_yaml(path)
     questions = tuple(
         _build(Question, q) for q in raw.get("questions", []) if isinstance(q, dict)
@@ -208,8 +232,9 @@ def _load_character(path: Path) -> Character:
     data = dict(raw)
     data["questions"] = questions
     # Приведення списків до tuple виконує _build; fallbacks лишаємо dict.
+    # Зайві ключі (рантайм-секції на кшталт session:) _build ігнорує.
     try:
-        return _build(Character, data)
+        return _build(Character, data), raw
     except TypeError as exc:
         raise ConfigError(f"Некоректний файл персонажа {path}: {exc}") from exc
 

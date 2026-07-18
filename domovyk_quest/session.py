@@ -182,34 +182,46 @@ class QuestSession:
 
     # ── проактивне вітання ───────────────────────────────────────────────────
 
-    async def _send_greeting(self, session) -> None:
-        # send_client_content лише «підсаджує» історію в чергу й не гарантує
-        # швидкої відповіді (за офіційною документацією Live API — використовується
-        # для попереднього наповнення контексту, а не як реальний тригер мовлення).
-        # send_realtime_input трактує вхід як живу активність користувача (як мову)
-        # і надійно змушує native-audio модель відповісти голосом одразу.
-        await session.send_realtime_input(text=GREETING_TRIGGER)
+    async def _send_greeting(self, session, method: str = "client_content") -> None:
+        """Спонукати модель заговорити першою.
+
+        Надійність «привітатися першим» у native-audio залежить від платформи й
+        версії SDK/бекенду, тож підтримуємо два способи:
+          * client_content — надсилає ЗАКРИТИЙ хід користувача (turn_complete=True);
+            це канонічний сигнал «тепер відповідай», рекомендований документацією;
+          * realtime       — трактує текст як живу активність користувача.
+        Нудж (нижче) чергує обидва, щоб хоч один спрацював у цьому середовищі.
+        """
+        if method == "realtime":
+            await session.send_realtime_input(text=GREETING_TRIGGER)
+        else:
+            await session.send_client_content(
+                turns=types.Content(role="user", parts=[types.Part(text=GREETING_TRIGGER)]),
+                turn_complete=True,
+            )
 
     async def _greeting_nudge(self, session, state: _State, end: asyncio.Event) -> None:
         """Страховка: якщо персонаж не заговорив сам — повторно спонукаємо його.
 
-        Іноді native-audio модель «проспинає» перший текстовий сигнал і чекає
-        на голос дитини. Щоб персонаж гарантовано почав розмову першим, за
-        кілька секунд тиші повторюємо сигнал (кілька разів).
+        Іноді native-audio модель «проспинає» перший сигнал і чекає на голос
+        дитини. Щоб персонаж гарантовано почав розмову першим, за кілька секунд
+        тиші повторюємо сигнал, ЧЕРГУЮЧИ спосіб (client_content ⇄ realtime) —
+        який-небудь із них зазвичай таки змушує модель відповісти.
         """
-        for _ in range(3):
+        methods = ("realtime", "client_content")
+        for i in range(4):
             try:
                 await asyncio.sleep(self.cfg.session.greeting_nudge_s)
             except asyncio.CancelledError:
                 raise
             if end.is_set() or state.got_audio:
                 return
-            log.info("Персонаж іще мовчить — повторно спонукаю привітатися…")
+            method = methods[i % len(methods)]
+            log.info("Персонаж іще мовчить — повторно спонукаю привітатися (%s)…", method)
             try:
-                await self._send_greeting(session)
+                await self._send_greeting(session, method=method)
             except Exception as exc:  # noqa: BLE001
-                log.debug("greeting nudge: %s", exc)
-                return
+                log.debug("greeting nudge (%s): %s", method, exc)
 
     # ── мікрофон → модель ────────────────────────────────────────────────────
 
