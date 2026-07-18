@@ -108,6 +108,10 @@ class _State:
     agent_speaking: bool = True
     speaking_ended_at: float = 0.0
     got_audio: bool = False  # чи модель уже щось сказала (для страхування вітання)
+    # Відновлення сесії при обриві WebSocket (1011 тощо), щоб не втратити квест.
+    resumption_handle: Optional[str] = None
+    got_message_this_conn: bool = False  # чи це з'єднання встигло щось прийняти
+    consec_failures: int = 0             # поспіль «мертвих» з'єднань (для стелі спроб)
 
 
 class QuestSession:
@@ -120,9 +124,9 @@ class QuestSession:
         w = _normalize(self.character.win_word).strip()
         self._win_stem = w[:-1] if len(w) > 4 else w
 
-    def _live_config(self) -> types.LiveConnectConfig:
+    def _live_config(self, resume_handle: Optional[str] = None) -> types.LiveConnectConfig:
         sys_text = build_system_instruction(self.character)
-        return types.LiveConnectConfig(
+        kwargs = dict(
             response_modalities=["AUDIO"],
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
@@ -135,50 +139,120 @@ class QuestSession:
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
         )
+        # Стиснення контексту — щоб довга сесія (до 30 хв з паузами) не впиралася
+        # в ліміт тривалості живого з'єднання й не обривалася сама собою.
+        if self.cfg.session.context_compression:
+            kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
+                sliding_window=types.SlidingWindow()
+            )
+        # Відновлення сесії — сервер шле «handle», за яким при обриві (1011)
+        # можна перепідключитися й продовжити розмову без втрати контексту.
+        if self.cfg.session.session_resumption:
+            kwargs["session_resumption"] = types.SessionResumptionConfig(
+                handle=resume_handle
+            )
+        return types.LiveConnectConfig(**kwargs)
 
     async def run(self) -> Outcome:
-        """Провести один квест від пробудження до завершення."""
+        """Провести один квест від пробудження до завершення.
+
+        Тримає розмову живою через ланцюжок з'єднань: якщо WebSocket обривається
+        (серверний 1011 / ліміт тривалості), перепідключаємося за resumption-
+        handle і продовжуємо той самий квест, доки не буде перемоги, тайм-ауту
+        бездіяльності чи загального ліміту тривалості.
+        """
         self.audio.drain_mic()
+        state = _State()
+        end = asyncio.Event()
+        deadline = time.monotonic() + self.cfg.session.max_duration_s
+        first = True
         try:
-            async with self.client.aio.live.connect(
-                model=self.cfg.gemini.model, config=self._live_config()
-            ) as session:
-                log.info("Сесію Gemini Live відкрито (голос: %s)", self.character.voice)
-                state = _State()
-                end = asyncio.Event()
-
-                # Персонаж має заговорити ПЕРШИМ, щойно дитина сказала кодове слово.
-                if self.cfg.session.greeting_on_wake:
-                    await self._send_greeting(session)
-
-                tasks = [
-                    asyncio.create_task(self._send_loop(session, state, end)),
-                    asyncio.create_task(self._recv_loop(session, state, end)),
-                    asyncio.create_task(self._watchdog(state, end)),
-                ]
-                if self.cfg.session.greeting_on_wake:
-                    tasks.append(
-                        asyncio.create_task(self._greeting_nudge(session, state, end))
-                    )
-                try:
-                    await asyncio.wait_for(
-                        end.wait(), timeout=self.cfg.session.max_duration_s
-                    )
-                except asyncio.TimeoutError:
-                    log.info("Досягнуто ліміт тривалості квесту.")
+            while not end.is_set() and time.monotonic() < deadline:
+                dropped = await self._run_one_connection(state, end, deadline, first)
+                first = False
+                if end.is_set() or not dropped:
+                    break
+                if state.consec_failures > self.cfg.session.max_reconnects:
+                    log.error("Забагато обривів з'єднання поспіль (%d) — завершую квест.",
+                              state.consec_failures)
                     if state.outcome is None:
-                        state.outcome = Outcome.TIMEOUT
-                finally:
-                    for t in tasks:
-                        t.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                    self.audio.stop_playback()
-                return state.outcome or Outcome.TIMEOUT
+                        state.outcome = Outcome.ERROR
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                backoff = min(self.cfg.session.reconnect_backoff_s * state.consec_failures, 8.0)
+                log.info("З'єднання обірвалося — перепідключаюся через %.1f с…", backoff)
+                await asyncio.sleep(backoff)
+                self.audio.drain_mic()
+            if state.outcome is None and time.monotonic() >= deadline:
+                log.info("Досягнуто ліміт тривалості квесту.")
+                state.outcome = Outcome.TIMEOUT
         except asyncio.CancelledError:
             return Outcome.ABORTED
         except Exception as exc:  # noqa: BLE001
             log.error("Помилка сесії Gemini Live: %s", exc)
             return Outcome.ERROR
+        finally:
+            self.audio.stop_playback()
+        return state.outcome or Outcome.TIMEOUT
+
+    async def _run_one_connection(
+        self, state: _State, end: asyncio.Event, deadline: float, first: bool
+    ) -> bool:
+        """Одне з'єднання. Повертає True, якщо воно обірвалося й треба відновити."""
+        conn_lost = asyncio.Event()
+        state.got_message_this_conn = False
+        try:
+            async with self.client.aio.live.connect(
+                model=self.cfg.gemini.model,
+                config=self._live_config(resume_handle=state.resumption_handle),
+            ) as session:
+                if first:
+                    log.info("Сесію Gemini Live відкрито (голос: %s)", self.character.voice)
+                else:
+                    # Після відновлення відкриваємо мікрофон, щоб дитина могла
+                    # знову заговорити (агент уже не «в процесі мовлення»).
+                    state.agent_speaking = False
+                    log.info("Сесію Gemini Live відновлено — продовжую квест…")
+
+                # Вітання й нудж — лише на першому з'єднанні. Після відновлення
+                # персонаж уже привітався; контекст розмови збережено.
+                if first and self.cfg.session.greeting_on_wake:
+                    await self._send_greeting(session)
+
+                tasks = [
+                    asyncio.create_task(self._send_loop(session, state, end, conn_lost)),
+                    asyncio.create_task(self._recv_loop(session, state, end, conn_lost)),
+                    asyncio.create_task(self._watchdog(state, end, deadline)),
+                ]
+                if first and self.cfg.session.greeting_on_wake:
+                    tasks.append(
+                        asyncio.create_task(self._greeting_nudge(session, state, end))
+                    )
+                waiters = [
+                    asyncio.create_task(end.wait()),
+                    asyncio.create_task(conn_lost.wait()),
+                ]
+                try:
+                    await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    for t in tasks + waiters:
+                        t.cancel()
+                    await asyncio.gather(*tasks, *waiters, return_exceptions=True)
+                    self.audio.stop_playback()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("З'єднання Gemini Live урвалося: %s", exc)
+            conn_lost.set()
+
+        dropped = conn_lost.is_set() and not end.is_set()
+        if dropped:
+            # «Продуктивне» з'єднання (щось прийняли) скидає лічильник — такі
+            # обриви нормальні для довгих сесій. Лише геть «мертві» поспіль
+            # з'єднання наближають до стелі спроб.
+            state.consec_failures = 0 if state.got_message_this_conn else state.consec_failures + 1
+        return dropped
 
     # ── проактивне вітання ───────────────────────────────────────────────────
 
@@ -225,14 +299,15 @@ class QuestSession:
 
     # ── мікрофон → модель ────────────────────────────────────────────────────
 
-    async def _send_loop(self, session, state: _State, end: asyncio.Event) -> None:
+    async def _send_loop(self, session, state: _State, end: asyncio.Event,
+                         conn_lost: asyncio.Event) -> None:
         rate = self.cfg.audio.input_sample_rate
         threshold = self.cfg.audio.vad_rms_threshold
         mime = f"audio/pcm;rate={rate}"
         half_duplex = self.cfg.session.half_duplex
         guard_s = self.cfg.session.echo_guard_ms / 1000.0
         was_blocking = False
-        while not end.is_set():
+        while not end.is_set() and not conn_lost.is_set():
             data = await self.audio.read()
 
             # Напівдуплекс: поки агент говорить (або щойно договорив), НЕ шлемо
@@ -261,11 +336,13 @@ class QuestSession:
                 )
             except Exception as exc:  # noqa: BLE001
                 log.debug("send_realtime_input: %s", exc)
+                conn_lost.set()
                 break
 
     # ── модель → колонка ─────────────────────────────────────────────────────
 
-    async def _recv_loop(self, session, state: _State, end: asyncio.Event) -> None:
+    async def _recv_loop(self, session, state: _State, end: asyncio.Event,
+                         conn_lost: asyncio.Event) -> None:
         transcript = self.cfg.logging.transcript
         try:
             while not end.is_set():
@@ -274,7 +351,14 @@ class QuestSession:
                 got_message = False
                 async for response in session.receive():
                     got_message = True
+                    state.got_message_this_conn = True
                     log.debug("Live-повідомлення: %s", _summarize_response(response))
+
+                    # Handle для відновлення сесії при майбутньому обриві.
+                    sru = getattr(response, "session_resumption_update", None)
+                    if sru is not None and getattr(sru, "new_handle", None):
+                        state.resumption_handle = sru.new_handle
+
                     audio_bytes = _audio_from_response(response)
                     if audio_bytes:
                         self.audio.play(audio_bytes)
@@ -329,18 +413,26 @@ class QuestSession:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            log.error("receive(): %s", exc)
-            if state.outcome is None:
-                state.outcome = Outcome.ERROR
-            end.set()
+            # Обрив з'єднання (напр. 1011). НЕ завершуємо квест помилкою —
+            # сигналізуємо про втрату з'єднання, run() спробує відновити сесію.
+            log.warning("receive(): %s", exc)
+        finally:
+            if not end.is_set():
+                conn_lost.set()
 
     # ── сторож бездіяльності ─────────────────────────────────────────────────
 
-    async def _watchdog(self, state: _State, end: asyncio.Event) -> None:
+    async def _watchdog(self, state: _State, end: asyncio.Event, deadline: float) -> None:
         timeout = self.cfg.session.inactivity_timeout_s
         try:
             while not end.is_set():
                 await asyncio.sleep(1.0)
+                if time.monotonic() >= deadline:
+                    log.info("Досягнуто ліміт тривалості квесту.")
+                    if state.outcome is None:
+                        state.outcome = Outcome.TIMEOUT
+                    end.set()
+                    return
                 if state.won:
                     continue
                 idle = time.monotonic() - state.last_user_voice
