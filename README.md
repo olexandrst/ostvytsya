@@ -116,8 +116,7 @@ pip install -r requirements.txt
 #   macOS:              brew install portaudio
 
 # 2. Ключ Gemini
-cp .env.example .env        # впиши GEMINI_API_KEY
-export $(grep -v '^#' .env | xargs)     # або просто: export GEMINI_API_KEY=...
+cp .env.example .env        # впиши GEMINI_API_KEY (файл читається автоматично)
 
 # 3. Найшвидша перевірка — без розпізнавання слова та мікрофона для wake:
 python -m domovyk_quest --wake manual --once
@@ -144,17 +143,29 @@ python -m domovyk_quest --list-devices
 # 1. Залежності веб-режиму (окремо від консольних)
 pip install -r requirements-web.txt
 
-# 2. Налаштування
-cp .env.example .env
+# 2. Налаштування — СТВОРИ ФАЙЛ .env (саме .env, а не .env.example!)
+cp .env.example .env                # Windows PowerShell: copy .env.example .env
 #   OPENAI_API_KEY=...              ← ключ з https://platform.openai.com/api-keys
 #   OSTVYTSYA_WEB_USER=admin
 #   OSTVYTSYA_WEB_PASSWORD=...      ← пароль для входу
 #   OSTVYTSYA_WEB_SECRET=...        ← python -c "import secrets; print(secrets.token_urlsafe(48))"
-export $(grep -v '^#' .env | xargs)
 
 # 3. Старт
 python -m web                       # → http://127.0.0.1:8080
 ```
+
+Файл `.env` читається **автоматично** (і на Windows теж) — вручну експортувати
+змінні не треба. При старті видно, що саме підхопилося:
+
+```
+📄 Прочитано налаштування з C:\...\ostvytsya\.env
+🔑 OPENAI_API_KEY: sk-pro…(164 симв.)
+🌐 Веб-квест на http://127.0.0.1:8080
+```
+
+Якщо бачиш `⚠️ Файл .env не знайдено` або `⚠️ Не задано OPENAI_API_KEY` —
+перевір, що файл названо саме `.env` (Провідник Windows любить дописати `.txt`)
+і лежить у корені проєкту.
 
 Відкрий у браузері, увійди — і далі:
 
@@ -373,6 +384,7 @@ tail -f logs/ostvytsya_$(date +%F).log      # стежити за сьогодн
 | Не тією мовою | переконайся, що `style`/`persona` наголошують українську; голос лишай із підтримкою uk |
 | `receive(): 1011 … Deadline expired` | сервер закрив довге з'єднання. Агент сам перепідключається за resumption-handle і продовжує квест — у лозі буде «Сесію відновлено». Якщо обриви безперервні, дивись мережу |
 | **Веб:** сторінка входу каже «пароль не налаштовано» | додай `OSTVYTSYA_WEB_PASSWORD` у `.env` і перезапусти `python -m web` |
+| **Веб:** «Не задано OPENAI_API_KEY», хоча ключ у файлі є | ключ вписано у `.env.example` замість `.env`, або файл названо `.env.txt`. Перевір рядок `📄 Прочитано налаштування з …` при старті — якщо його немає, файл не знайдено |
 | **Веб:** «не вдалося отримати токен» / 502 | перевір `OPENAI_API_KEY` та баланс акаунта OpenAI; текст помилки від OpenAI видно в логу сервера |
 | **Веб:** браузер не питає мікрофон | мікрофон дозволений лише на `https://` або `localhost` — постав HTTPS чи відкривай локально |
 | **Веб:** «Недійсний CSRF-токен» | сторінка провисіла з попереднього запуску сервера — просто онови її (F5) |
