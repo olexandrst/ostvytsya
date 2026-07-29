@@ -42,6 +42,11 @@ def _setup_logging(cfg) -> None:
 def main(argv=None) -> int:
     args = _parse_args(argv)
 
+    # Читаємо .env самі: у PowerShell немає `export $(grep ...)`, тож покладатися
+    # на ручний експорт змінних не можна.
+    from .envfile import load_env_file
+    load_env_file()
+
     if args.list_devices:
         from .audio_io import list_devices
         print(list_devices())

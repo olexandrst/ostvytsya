@@ -40,7 +40,23 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s",
                         datefmt="%H:%M:%S")
 
+    # Імпорт web.app читає .env (див. app.py), тож стан оточення перевіряємо після нього.
+    from .app import _ENV_PATH
     from .auth import Auth
+    from domovyk_quest.envfile import mask
+
+    if _ENV_PATH:
+        print(f"📄 Прочитано налаштування з {_ENV_PATH}")
+    else:
+        print("⚠️  Файл .env не знайдено — читаю лише змінні середовища.", file=sys.stderr)
+
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if openai_key:
+        print(f"🔑 OPENAI_API_KEY: {mask(openai_key)}")
+    else:
+        print("⚠️  Не задано OPENAI_API_KEY — квест не запуститься. "
+              "Впиши ключ у файл .env (саме .env, не .env.example).", file=sys.stderr)
+
     if not Auth().configured:
         print("⚠️  Не задано пароль (OSTVYTSYA_WEB_PASSWORD у .env) — вхід буде неможливий.",
               file=sys.stderr)

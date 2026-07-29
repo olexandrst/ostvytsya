@@ -26,7 +26,13 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.status import HTTP_303_SEE_OTHER
 
-from domovyk_quest.characters import (
+from domovyk_quest.envfile import load_env_file
+
+# Читаємо .env ДО того, як щось із нього знадобиться (Auth зчитує оточення
+# одразу при створенні). Працює однаково на Linux/macOS і Windows.
+_ENV_PATH, _ENV_KEYS = load_env_file()
+
+from domovyk_quest.characters import (  # noqa: E402  (після завантаження .env)
     GEMINI_VOICES,
     OPENAI_VOICES,
     CharacterError,
@@ -38,7 +44,7 @@ from domovyk_quest.characters import (
     slugify,
     validate_id,
 )
-from domovyk_quest.prompt import build_system_instruction
+from domovyk_quest.prompt import build_system_instruction  # noqa: E402
 
 from .auth import Auth, session_secret
 from .realtime import GREETING_INSTRUCTION, RealtimeError, create_client_secret, model_name
