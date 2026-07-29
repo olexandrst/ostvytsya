@@ -226,6 +226,45 @@ def save_raw(char_id: str, data: dict[str, Any], *, create: bool = False,
     return cid
 
 
+def unique_id(base: str, root: Optional[Path] = None) -> str:
+    """Підібрати вільний ідентифікатор: «makosh», «makosh-2», «makosh-3»…"""
+    stem = validate_id(base)
+    if not character_path(stem, root).exists():
+        return stem
+    for n in range(2, 1000):
+        candidate = f"{stem}-{n}"[:64].strip("-")
+        if not character_path(candidate, root).exists():
+            return candidate
+    raise CharacterError("Не вдалося підібрати вільний ідентифікатор.")
+
+
+def clone_character(char_id: str, root: Optional[Path] = None) -> tuple[str, str]:
+    """Створити копію персонажа з усім сценарієм. Повертає (новий_id, назва)."""
+    raw = read_raw(char_id, root)
+    new_id = unique_id(f"{validate_id(char_id)}-kopiia", root)
+    name = (raw.get("display_name") or char_id).strip()
+    payload = dict(raw)
+    payload["display_name"] = f"{name} (копія)"
+    payload["id"] = new_id
+    # Пишемо копію з нуля, а не поверх оригіналу, щоб не тягнути його коментарі
+    # з чужим ім'ям персонажа у заголовку файлу.
+    path = character_path(new_id, root)
+    _check_payload(payload)
+    build_character(payload)
+    text = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False,
+                          width=100, default_flow_style=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    return new_id, payload["display_name"]
+
+
 def delete_character(char_id: str, root: Optional[Path] = None) -> None:
     path = character_path(char_id, root)
     if not path.exists():

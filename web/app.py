@@ -37,6 +37,7 @@ from domovyk_quest.characters import (  # noqa: E402  (після заванта
     OPENAI_VOICES,
     CharacterError,
     build_character,
+    clone_character,
     delete_character,
     list_characters,
     read_raw,
@@ -307,6 +308,19 @@ async def api_update(char_id: str, request: Request,
         return JSONResponse({"error": str(exc)}, status_code=400)
     log.info("Оновлено персонажа «%s»", char_id)
     return {"ok": True, "id": char_id}
+
+
+@app.post("/api/characters/{char_id}/clone")
+async def api_clone(char_id: str, request: Request,
+                    user: str = Depends(require_login)):
+    body = await request.json()
+    check_csrf(request, body.get("csrf"))
+    try:
+        new_id, new_name = clone_character(char_id)
+    except CharacterError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    log.info("Клоновано «%s» → «%s»", char_id, new_id)
+    return {"ok": True, "id": new_id, "display_name": new_name}
 
 
 @app.post("/api/characters/{char_id}/delete")

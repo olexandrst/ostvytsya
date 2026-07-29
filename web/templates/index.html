@@ -31,6 +31,8 @@
     <div class="actions">
       <a class="btn btn-primary" href="/quest/{{ c.id }}">▶ Запустити квест</a>
       <a class="btn" href="/characters/{{ c.id }}/edit">Редагувати</a>
+      <button class="btn js-clone" data-id="{{ c.id }}"
+              data-name="{{ c.display_name }}">Клонувати</button>
       <button class="btn btn-danger js-delete" data-id="{{ c.id }}"
               data-name="{{ c.display_name }}">Видалити</button>
     </div>

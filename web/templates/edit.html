@@ -37,22 +37,9 @@
     </label>
   </div>
 
-  <label>Голос для консольного режиму (Gemini)
-    <select name="voice">
-      {% for v in gemini_voices %}
-      <option value="{{ v }}" {% if v == char.voice %}selected{% endif %}>{{ v }}</option>
-      {% endfor %}
-    </select>
+  <label>Фінальне слово <span class="muted">(персонаж називає його в кінці квесту)</span>
+    <input type="text" name="win_word" value="{{ char.win_word }}" placeholder="Чарівниця">
   </label>
-
-  <div class="row">
-    <label>Кодові слова <span class="muted">(через кому, для консолі)</span>
-      <input type="text" name="wake_words" value="{{ char.wake_words }}" placeholder="Вихор, вихір">
-    </label>
-    <label>Фінальне слово
-      <input type="text" name="win_word" value="{{ char.win_word }}" placeholder="Чарівниця">
-    </label>
-  </div>
 
   <label>Промпт персонажа <span class="muted">— саме цей текст отримує модель</span>
     <textarea name="system_prompt" rows="18"
