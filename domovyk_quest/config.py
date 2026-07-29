@@ -109,6 +109,16 @@ class Character:
     # слова-відповіді, а лише слухати й підтверджувати.
     directives: tuple[str, ...] = ()
     fallbacks: dict[str, str] = field(default_factory=dict)
+    # ── Веб-режим (OpenAI Realtime) ──────────────────────────────────────────
+    # Голоси OpenAI інші, ніж у Gemini, тож зберігаємо їх окремим полем — так
+    # один і той самий персонаж працює в обох режимах (консоль + веб).
+    openai_voice: str = "marin"
+    # Швидкість мовлення у веб-режимі (1.0 = звичайна). Підтримує OpenAI Realtime.
+    speech_speed: float = 1.0
+    # Якщо задано — цей текст іде в модель ЯК Є, замість інструкції, зібраної з
+    # persona/style/questions. Так веб-редактор може створювати персонажів
+    # довільним промптом, не описуючи повний YAML-сценарій.
+    system_prompt: str = ""
 
 
 @dataclass(frozen=True)
@@ -279,7 +289,12 @@ def _validate(cfg: AppConfig) -> None:
         raise ConfigError(f"Невідомий wake.mode: {cfg.wake.mode!r} (vosk|gemini|manual)")
     if not cfg.character.wake_words:
         raise ConfigError("У персонажа має бути хоча б одне кодове слово (wake_words).")
-    if not cfg.character.questions:
-        raise ConfigError("У персонажа має бути хоча б одна загадка (questions).")
     if not cfg.character.win_word:
         raise ConfigError("У персонажа має бути фінальне слово (win_word).")
+    # Персонаж, створений у веб-редакторі, описаний вільним промптом і не має
+    # структурованих загадок — для нього ця вимога не діє.
+    if not cfg.character.questions and not cfg.character.system_prompt:
+        raise ConfigError(
+            "У персонажа має бути хоча б одна загадка (questions) "
+            "або вільний промпт (system_prompt)."
+        )

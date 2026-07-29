@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ display_name }} · квест{% endblock %}
+{% block content %}
+<div class="head-row">
+  <div>
+    <h1>{{ display_name }}</h1>
+    <p class="muted">Голос: <code>{{ voice }}</code> · модель: <code>{{ model }}</code></p>
+  </div>
+  <a class="btn btn-ghost" href="/">← До списку</a>
+</div>
+
+<div class="card quest">
+  <div class="quest-controls">
+    <button id="btn-start" class="btn btn-primary btn-big">🎙 Почати квест</button>
+    <button id="btn-stop" class="btn btn-danger btn-big" hidden>■ Завершити</button>
+    <span id="status" class="status">Готово до запуску</span>
+  </div>
+  <p class="muted hint">
+    Браузер попросить дозвіл на мікрофон. Говори звичайним голосом — персонаж
+    відповідатиме вголос. Для навушників або тихої кімнати працює найкраще.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Розмова</h2>
+  <div id="transcript" class="transcript">
+    <p class="muted">Тут з'являтиметься розшифровка діалогу…</p>
+  </div>
+</div>
+
+<audio id="remote-audio" autoplay></audio>
+
+<script>
+  window.CSRF = {{ csrf|tojson }};
+  window.CHAR_ID = {{ char_id|tojson }};
+  window.CHAR_NAME = {{ display_name|tojson }};
+</script>
+<script src="/static/quest.js"></script>
+{% endblock %}
