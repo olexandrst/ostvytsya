@@ -72,6 +72,18 @@
   function handleEvent(evt) {
     const type = evt.type || "";
 
+    // Діагностика: чи справді дійшов сценарій персонажа. Якщо інструкції
+    // порожні — персонаж почне імпровізувати, і це треба помітити одразу.
+    if (type === "session.created" || type === "session.updated") {
+      const instr = (evt.session && evt.session.instructions) || "";
+      console.info(`[Оствиця] сесія: інструкцій ${instr.length} символів`);
+      if (type === "session.created" && !instr) {
+        systemNote("⚠️ Сценарій персонажа не дійшов до моделі — вона говоритиме " +
+                   "від себе. Перевір лог сервера.");
+      }
+      return;
+    }
+
     // Відповідь персонажа (транскрипт синтезованого мовлення).
     if (type === "response.output_audio_transcript.delta" ||
         type === "response.audio_transcript.delta") {
@@ -118,13 +130,24 @@
     }
   }
 
-  /** Попросити персонажа заговорити першим. */
+  /** Попросити персонажа заговорити першим.
+   *
+   * Тригер іде як ПОВІДОМЛЕННЯ КОРИСТУВАЧА, а не як response.instructions:
+   * instructions у response.create замінюють системні інструкції для цієї
+   * відповіді, тож персонаж почав би вітання, не бачачи власного сценарію,
+   * і вигадав би собі квест.
+   */
   function greet(greeting) {
     if (!dc || dc.readyState !== "open") return;
     dc.send(JSON.stringify({
-      type: "response.create",
-      response: { instructions: greeting },
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: greeting }],
+      },
     }));
+    dc.send(JSON.stringify({ type: "response.create" }));
     setStatus("Персонаж вітається…", "live");
   }
 
