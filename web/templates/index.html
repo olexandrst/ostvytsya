@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Персонажі · Оствиця{% endblock %}
+{% block content %}
+<div class="head-row">
+  <div>
+    <h1>Персонажі</h1>
+    <p class="muted">Модель: <code>{{ model }}</code> · сценарії спільні з консольним режимом</p>
+  </div>
+  <a class="btn btn-primary" href="/characters/new">+ Новий персонаж</a>
+</div>
+
+{% if not characters %}
+  <div class="card"><p class="muted">Персонажів ще немає. Створи першого!</p></div>
+{% endif %}
+
+<div class="grid">
+  {% for c in characters %}
+  <div class="card char" data-id="{{ c.id }}">
+    <div class="char-head">
+      <h2>{{ c.display_name }}</h2>
+      <code class="muted">{{ c.id }}</code>
+    </div>
+    <dl class="meta">
+      <div><dt>Голос</dt><dd>{{ c.openai_voice }}</dd></div>
+      <div><dt>Сценарій</dt>
+        <dd>{% if c.custom_prompt %}вільний промпт{% elif c.questions %}{{ c.questions }} загадк(и){% else %}—{% endif %}</dd></div>
+      {% if c.wake_words %}
+      <div><dt>Кодове слово</dt><dd>{{ c.wake_words[0] }}</dd></div>
+      {% endif %}
+    </dl>
+    <div class="actions">
+      <a class="btn btn-primary" href="/quest/{{ c.id }}">▶ Запустити квест</a>
+      <a class="btn" href="/characters/{{ c.id }}/edit">Редагувати</a>
+      <button class="btn btn-danger js-delete" data-id="{{ c.id }}"
+              data-name="{{ c.display_name }}">Видалити</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>window.CSRF = {{ csrf|tojson }};</script>
+<script src="/static/characters.js"></script>
+{% endblock %}

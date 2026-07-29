@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Вхід · Оствиця{% endblock %}
+{% block content %}
+<div class="card card-narrow">
+  <h1>Вхід</h1>
+  {% if not configured %}
+    <p class="alert alert-warn">
+      Пароль не налаштовано. Додай <code>OSTVYTSYA_WEB_PASSWORD</code> у файл
+      <code>.env</code> і перезапусти сервер.
+    </p>
+  {% endif %}
+  {% if error %}<p class="alert alert-error">{{ error }}</p>{% endif %}
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Логін
+      <input type="text" name="username" autocomplete="username" autofocus required>
+    </label>
+    <label>Пароль
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button class="btn btn-primary" type="submit">Увійти</button>
+  </form>
+</div>
+{% endblock %}

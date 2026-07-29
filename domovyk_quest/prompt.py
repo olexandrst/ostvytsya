@@ -37,6 +37,11 @@ def _format_question(idx: int, q) -> str:
 
 
 def build_system_instruction(ch: Character) -> str:
+    # Персонаж із вільним промптом (напр. створений у веб-редакторі) іде в модель
+    # як є — жодної збірки зі сценарію.
+    if ch.system_prompt and ch.system_prompt.strip():
+        return ch.system_prompt.strip()
+
     style = "\n".join(f"  - {s}" for s in ch.style) if ch.style else "  - Говори українською."
     questions = "\n\n".join(
         _format_question(i, q) for i, q in enumerate(ch.questions, 1)
