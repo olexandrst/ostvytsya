@@ -21,7 +21,8 @@
       <code class="muted">{{ c.id }}</code>
     </div>
     <dl class="meta">
-      <div><dt>Голос</dt><dd>{{ c.openai_voice }}</dd></div>
+      <div><dt>Модель</dt><dd>{{ c.provider_label }}</dd></div>
+      <div><dt>Голос</dt><dd>{{ c.web_voice }}</dd></div>
       <div><dt>Сценарій</dt>
         <dd>{% if c.custom_prompt %}вільний промпт{% elif c.questions %}{{ c.questions }} загадк(и){% else %}—{% endif %}</dd></div>
       {% if c.wake_words %}

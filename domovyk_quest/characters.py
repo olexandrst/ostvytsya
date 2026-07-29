@@ -26,11 +26,14 @@ OPENAI_VOICES = (
     "coral", "echo", "sage", "shimmer", "verse",
 )
 
-# Голоси Gemini Native Audio (для консольного режиму).
+# Голоси Gemini Native Audio (консоль + веб-режим із провайдером google).
 GEMINI_VOICES = (
     "Charon", "Enceladus", "Aoede", "Leda", "Laomedeia", "Pulcherrima",
     "Autonoe", "Zephyr", "Sadachbita", "Kore", "Puck", "Fenrir",
 )
+
+# Якою моделлю персонаж говорить у браузері.
+PROVIDERS = ("openai", "google")
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -121,11 +124,17 @@ def list_characters(root: Optional[Path] = None) -> list[dict[str, Any]]:
             raw = read_raw(char_id, root)
         except (CharacterError, yaml.YAMLError):
             continue  # пошкоджений файл не має ламати весь список
+        provider = (raw.get("provider") or "openai").strip()
         out.append({
             "id": char_id,
             "display_name": raw.get("display_name") or char_id,
+            "provider": provider,
+            "provider_label": "Google Gemini" if provider == "google" else "OpenAI",
             "voice": raw.get("voice") or "",
             "openai_voice": raw.get("openai_voice") or "marin",
+            # Голос, яким персонаж говоритиме у вебі — залежить від провайдера.
+            "web_voice": (raw.get("voice") or "Charon") if provider == "google"
+                         else (raw.get("openai_voice") or "marin"),
             "wake_words": list(raw.get("wake_words") or []),
             "win_word": raw.get("win_word") or "",
             "questions": len(raw.get("questions") or []),
@@ -139,9 +148,15 @@ def list_characters(root: Optional[Path] = None) -> list[dict[str, Any]]:
 def _check_payload(data: dict[str, Any]) -> None:
     if not (data.get("display_name") or "").strip():
         raise CharacterError("Вкажи назву персонажа.")
+    provider = (data.get("provider") or "").strip()
+    if provider and provider not in PROVIDERS:
+        raise CharacterError(f"Невідомий провайдер: «{provider}» (openai|google).")
     voice = (data.get("openai_voice") or "").strip()
     if voice and voice not in OPENAI_VOICES:
         raise CharacterError(f"Невідомий голос OpenAI: «{voice}».")
+    gvoice = (data.get("voice") or "").strip()
+    if gvoice and gvoice not in GEMINI_VOICES:
+        raise CharacterError(f"Невідомий голос Google: «{gvoice}».")
     has_prompt = bool((data.get("system_prompt") or "").strip())
     has_questions = bool(data.get("questions"))
     if not has_prompt and not has_questions:

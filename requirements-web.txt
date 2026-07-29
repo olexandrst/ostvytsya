@@ -11,3 +11,4 @@ itsdangerous>=2.1       # підпис сесійної куки
 httpx>=0.27             # запити до OpenAI (ephemeral-токени)
 PyYAML>=6.0             # читання/запис персонажів
 ruamel.yaml>=0.18       # редагування YAML зі збереженням коментарів
+google-genai>=1.16.0    # Gemini Live для веб-режиму (провайдер google)

@@ -21,8 +21,15 @@
   </label>
   {% endif %}
 
+  <label>Модель <span class="muted">(якою персонаж говорить у браузері)</span>
+    <select name="provider" id="provider">
+      <option value="openai" {% if char.provider != "google" %}selected{% endif %}>OpenAI Realtime</option>
+      <option value="google" {% if char.provider == "google" %}selected{% endif %}>Google Gemini Live</option>
+    </select>
+  </label>
+
   <div class="row">
-    <label>Голос (веб, OpenAI)
+    <label data-voice-for="openai">Голос OpenAI
       <select name="openai_voice">
         {% for v in openai_voices %}
         <option value="{{ v }}" {% if v == char.openai_voice %}selected{% endif %}>
@@ -31,7 +38,14 @@
         {% endfor %}
       </select>
     </label>
-    <label>Швидкість мовлення
+    <label data-voice-for="google">Голос Google
+      <select name="voice">
+        {% for v in gemini_voices %}
+        <option value="{{ v }}" {% if v == char.voice %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Швидкість мовлення <span class="muted" data-speed-note hidden>(лише OpenAI)</span>
       <input type="number" name="speech_speed" min="0.25" max="2" step="0.05"
              value="{{ char.speech_speed }}">
     </label>
