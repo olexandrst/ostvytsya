@@ -18,9 +18,22 @@
   let pc = null;        // RTCPeerConnection
   let micStream = null; // локальний мікрофон
   let dc = null;        // канал подій "oai-events"
+  let micTimer = null;  // відкладене вмикання мікрофона після репліки
+  let greetTimer = null; // повтор вітання, якщо персонаж забарився
+  let greetTries = 0;
+  let greetingText = "";
+  let gotAudio = false; // чи персонаж уже щось сказав
 
   // Рядки транскрипту, які ще доповнюються (id → елемент).
   const pending = new Map();
+
+  /** Мікрофон вимкнено, поки персонаж говорить — його не можна перебити.
+   *  Це і захист від перебивань, і від акустичного відлуння з колонок.
+   */
+  function setMicEnabled(on) {
+    if (!micStream) return;
+    micStream.getAudioTracks().forEach((t) => { t.enabled = on; });
+  }
 
   function setStatus(text, kind = "") {
     statusEl.textContent = text;
@@ -87,6 +100,8 @@
     // Відповідь персонажа (транскрипт синтезованого мовлення).
     if (type === "response.output_audio_transcript.delta" ||
         type === "response.audio_transcript.delta") {
+      gotAudio = true;
+      clearTimeout(greetTimer);
       appendChunk("out:" + (evt.item_id || evt.response_id || "cur"),
                   window.CHAR_NAME, "line-agent", evt.delta || "");
       return;
@@ -111,6 +126,14 @@
       return;
     }
 
+    // Персонаж почав репліку — глушимо мікрофон, щоб його не перебили.
+    if (type === "response.created") {
+      clearTimeout(micTimer);
+      setMicEnabled(false);
+      setStatus("🔇 Персонаж говорить — слухай", "speaking");
+      return;
+    }
+
     if (type === "input_audio_buffer.speech_started") {
       setStatus("Слухаю…", "live");
       return;
@@ -120,7 +143,13 @@
       return;
     }
     if (type === "response.done") {
-      setStatus("Твоя черга — говори", "live");
+      // Невелика пауза: аудіо ще догравається в буфері, і мікрофон, увімкнений
+      // одразу, зловив би «хвіст» власного голосу персонажа.
+      clearTimeout(micTimer);
+      micTimer = setTimeout(() => {
+        setMicEnabled(true);
+        setStatus("🎙 Твоя черга — говори", "live");
+      }, 600);
       return;
     }
     if (type === "error") {
@@ -149,6 +178,21 @@
     }));
     dc.send(JSON.stringify({ type: "response.create" }));
     setStatus("Персонаж вітається…", "live");
+    scheduleGreetRetry();
+  }
+
+  /** Підстраховка автозапуску: якщо персонаж чомусь не заговорив — повторюємо
+   *  сигнал. Квест має початися сам, без жодних дій від дитини.
+   */
+  function scheduleGreetRetry() {
+    clearTimeout(greetTimer);
+    if (greetTries >= 3) return;
+    greetTimer = setTimeout(() => {
+      if (gotAudio || !dc || dc.readyState !== "open") return;
+      greetTries += 1;
+      console.info("[Оствиця] персонаж мовчить — повторюю сигнал", greetTries);
+      greet(greetingText);
+    }, 6000);
   }
 
   async function start() {
@@ -178,7 +222,12 @@
       pc.addTrack(micStream.getTracks()[0], micStream);
 
       dc = pc.createDataChannel("oai-events");
-      dc.addEventListener("open", () => greet(tokenData.greeting));
+      // Квест стартує автоматично, щойно канал відкрився — так, ніби діти
+      // щойно промовили кодове слово.
+      greetingText = tokenData.greeting || "";
+      greetTries = 0;
+      gotAudio = false;
+      dc.addEventListener("open", () => greet(greetingText));
       dc.addEventListener("message", (e) => {
         try { handleEvent(JSON.parse(e.data)); } catch (_) { /* не-JSON ігноруємо */ }
       });
@@ -225,6 +274,8 @@
   }
 
   function stop(quiet = false) {
+    clearTimeout(micTimer);
+    clearTimeout(greetTimer);
     if (dc) { try { dc.close(); } catch (_) {} dc = null; }
     if (pc) { try { pc.close(); } catch (_) {} pc = null; }
     if (micStream) {

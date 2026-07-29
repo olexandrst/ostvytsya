@@ -145,6 +145,7 @@ summary { cursor: pointer; font-weight: 600; }
 .hint { margin: .9rem 0 0; font-size: .9rem; }
 .status { color: var(--muted); font-size: .95rem; }
 .status-live { color: var(--accent); font-weight: 600; }
+.status-speaking { color: var(--ink); font-weight: 600; }
 .status-error { color: var(--danger); font-weight: 600; }
 
 .transcript { max-height: 26rem; overflow-y: auto; display: grid; gap: .5rem; }
