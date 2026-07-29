@@ -54,21 +54,24 @@
     </label>
   </div>
 
-  <label>Промпт персонажа
-    <textarea name="system_prompt" rows="16"
+  <label>Промпт персонажа <span class="muted">— саме цей текст отримує модель</span>
+    <textarea name="system_prompt" rows="18"
               placeholder="Опиши, хто це, як говорить і як веде квест…">{{ char.system_prompt }}</textarea>
   </label>
 
-  {% if has_scenario and not char.system_prompt %}
+  {% if from_scenario %}
   <p class="alert alert-info">
-    У цього персонажа структурований YAML-сценарій (загадки, підказки, директиви).
-    Поле промпту порожнє — у модель іде інструкція, зібрана зі сценарію (нижче).
-    <strong>Якщо вписати сюди текст — він повністю замінить сценарій.</strong>
+    Цей промпт зібрано з YAML-сценарію персонажа (загадки, підказки, директиви
+    у <code>characters/{{ char.id }}.yaml</code>). Поки ти його не змінюєш, він
+    оновлюватиметься автоматично слідом за сценарієм.
+    <strong>Щойно відредагуєш текст тут — збережеться саме твоя версія</strong>,
+    і сценарій із YAML більше не використовуватиметься.
   </p>
-  <details>
-    <summary>Показати промпт, який іде в модель зараз</summary>
-    <pre class="prompt-preview">{{ generated_prompt }}</pre>
-  </details>
+  {% elif not creating %}
+  <p class="alert alert-info">
+    Це власний промпт персонажа — модель отримує рівно цей текст.
+    Щоб повернутися до YAML-сценарію, <strong>очисти поле</strong> й збережи.
+  </p>
   {% endif %}
 
   <div class="actions">

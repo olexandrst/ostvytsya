@@ -47,7 +47,7 @@ from domovyk_quest.characters import (  # noqa: E402  (після заванта
 from domovyk_quest.prompt import build_system_instruction  # noqa: E402
 
 from .auth import Auth, session_secret
-from .realtime import GREETING_INSTRUCTION, RealtimeError, create_client_secret, model_name
+from .realtime import GREETING_TRIGGER, RealtimeError, create_client_secret, model_name
 
 log = logging.getLogger("ostvytsya.web")
 
@@ -172,8 +172,7 @@ async def character_new(request: Request, user: str = Depends(require_login)):
         },
         "openai_voices": OPENAI_VOICES,
         "gemini_voices": GEMINI_VOICES,
-        "generated_prompt": "",
-        "has_scenario": False,
+        "from_scenario": False,
     })
 
 
@@ -185,8 +184,11 @@ async def character_edit(char_id: str, request: Request,
     except CharacterError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    character = build_character(raw)
     has_scenario = bool(raw.get("questions"))
+    own_prompt = (raw.get("system_prompt") or "").strip()
+    # У полі показуємо саме те, що реально йде в модель: власний промпт, якщо
+    # він заданий, інакше — інструкцію, зібрану зі сценарію.
+    effective_prompt = own_prompt or build_system_instruction(build_character(raw))
     return templates.TemplateResponse(request, "edit.html", {
         "user": user,
         "csrf": csrf_token(request),
@@ -197,15 +199,14 @@ async def character_edit(char_id: str, request: Request,
             "openai_voice": raw.get("openai_voice") or "marin",
             "voice": raw.get("voice") or "Charon",
             "speech_speed": raw.get("speech_speed") or 1.0,
-            "system_prompt": raw.get("system_prompt") or "",
+            "system_prompt": effective_prompt,
             "wake_words": ", ".join(raw.get("wake_words") or []),
             "win_word": raw.get("win_word") or "",
         },
         "openai_voices": OPENAI_VOICES,
         "gemini_voices": GEMINI_VOICES,
-        # Показуємо, який промпт піде в модель зараз (зібраний зі сценарію).
-        "generated_prompt": build_system_instruction(character),
-        "has_scenario": has_scenario,
+        # Промпт зібрано зі сценарію (а не написаний вручну) — про це варто сказати.
+        "from_scenario": has_scenario and not own_prompt,
     })
 
 
@@ -290,6 +291,17 @@ async def api_update(char_id: str, request: Request,
     try:
         base = read_raw(char_id)          # зберігаємо сценарій недоторканим
         payload = _payload_from_form(body, base)
+        # У формі показується ЕФЕКТИВНИЙ промпт. Якщо його не редагували, він
+        # дослівно збігається з інструкцією, зібраною зі сценарію, — тоді нічого
+        # не «фіксуємо» у system_prompt, і персонаж далі живе своїм YAML-сценарієм
+        # (правки сценарію одразу відображатимуться в грі).
+        submitted = (payload.get("system_prompt") or "").strip()
+        if submitted and base.get("questions"):
+            scenario_prompt = build_system_instruction(
+                build_character({**base, "system_prompt": ""})
+            ).strip()
+            if submitted == scenario_prompt:
+                payload["system_prompt"] = ""
         save_raw(char_id, payload, create=False)
     except CharacterError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -327,7 +339,7 @@ async def api_realtime_token(char_id: str, request: Request,
     except RealtimeError as exc:
         log.error("Realtime-токен для «%s»: %s", char_id, exc)
         return JSONResponse({"error": str(exc)}, status_code=502)
-    token["greeting"] = GREETING_INSTRUCTION
+    token["greeting"] = GREETING_TRIGGER
     return token
 
 
