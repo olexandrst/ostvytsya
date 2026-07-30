@@ -19,6 +19,10 @@
   --accent-ink: #ffffff;
   --gold: #c08a3e;            /* тепле золото для акцентів */
   --danger: #a8402f;
+  --blue: #2f6690;            /* «Редагувати» */
+  --blue-bg: #eaf1f7;
+  --gray: #6d6558;            /* «Клонувати» */
+  --gray-bg: #f1eee8;
 
   --warn-bg: #fdf3dd;  --warn-line: #e9cf95;
   --info-bg: #eef4ec;  --info-line: #c3d8bb;
@@ -51,6 +55,10 @@
     --accent-ink: #16200f;
     --gold: #d9a55c;
     --danger: #e2836f;
+    --blue: #7fb2d8;
+    --blue-bg: #1b2836;
+    --gray: #a99e8d;
+    --gray-bg: #2c2820;
 
     --warn-bg: #352c16;  --warn-line: #6b5629;
     --info-bg: #1e2a1c;  --info-line: #3d5636;
@@ -69,16 +77,56 @@
    інакше видно обидва списки голосів одразу. */
 [hidden] { display: none !important; }
 
+html { overflow-x: hidden; }
+
 body {
   margin: 0;
   min-height: 100vh;
   color: var(--ink);
   font: 16px/1.6 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  /* Градієнт лишається як підкладка: він видний, якщо background.jpg не додано. */
   background:
     radial-gradient(1200px 600px at 15% -10%, rgba(255, 255, 255, .75), transparent 60%),
     radial-gradient(900px 500px at 100% 0%, rgba(192, 138, 62, .12), transparent 55%),
     linear-gradient(165deg, var(--bg-1) 0%, var(--bg-2) 55%, var(--bg-3) 100%);
   background-attachment: fixed;
+}
+
+/* ── фонове зображення з розмиттям ──────────────────────────────────────────
+   position:fixed + z-index:-1 → шар не входить у потік і не додає скролбарів.
+   inset від'ємний і scale — щоб blur не давав світлих кантів по краях.
+   Якщо background.jpg немає, роут віддає 404 і шар просто лишається порожнім. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -40px;
+  z-index: -2;
+  background: url("/background.jpg") center / cover no-repeat;
+  filter: blur(16px) saturate(1.05);
+  transform: scale(1.08);
+  pointer-events: none;
+}
+
+/* Напівпрозора бежева завіса поверх фото — щоб текст і картки читалися. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1000px 600px at 20% 0%, rgba(255, 252, 245, .35), transparent 65%),
+    linear-gradient(165deg, rgba(247, 241, 230, .55) 0%, rgba(239, 228, 210, .6) 60%,
+                    rgba(232, 220, 198, .66) 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  body::before { filter: blur(16px) saturate(.9) brightness(.65); }
+  body::after {
+    background:
+      radial-gradient(1000px 600px at 20% 0%, rgba(30, 26, 20, .55), transparent 65%),
+      linear-gradient(165deg, rgba(26, 23, 18, .84) 0%, rgba(34, 29, 22, .88) 100%);
+  }
 }
 
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; }
@@ -179,8 +227,7 @@ h2 { font-size: 1.2rem; font-weight: 700; margin: 0 0 .6rem; letter-spacing: -.0
 .char-actions-row { display: flex; gap: .45rem; min-width: 0; }
 .char-actions-row .btn {
   flex: 1 1 0; min-width: 0; justify-content: center;
-  padding: .45rem .4rem; font-size: .82rem;
-  overflow: hidden; text-overflow: ellipsis;
+  padding: .45rem .3rem; font-size: .78rem; letter-spacing: -.01em;
 }
 .actions-bar {
   display: flex; flex-wrap: wrap; gap: .55rem; align-items: center;
@@ -210,6 +257,10 @@ h2 { font-size: 1.2rem; font-weight: 700; margin: 0 0 .6rem; letter-spacing: -.0
 }
 .btn-danger { color: var(--danger); border-color: var(--err-line); background: var(--panel); }
 .btn-danger:hover { background: var(--err-bg); }
+.btn-blue { color: var(--blue); border-color: var(--blue); background: var(--panel); }
+.btn-blue:hover { background: var(--blue-bg); }
+.btn-gray { color: var(--gray); border-color: var(--gray); background: var(--panel); }
+.btn-gray:hover { background: var(--gray-bg); }
 .btn-ghost { border-color: transparent; background: transparent; box-shadow: none; color: var(--muted); }
 .btn-ghost:hover { background: var(--panel-soft); box-shadow: none; }
 .btn-big { padding: .75rem 1.5rem; font-size: 1rem; }

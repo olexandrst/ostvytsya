@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -55,6 +55,7 @@ from .realtime import GREETING_TRIGGER, RealtimeError, create_client_secret, mod
 log = logging.getLogger("ostvytsya.web")
 
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
 
 app = FastAPI(title="Оствиця · квест-агент", docs_url=None, redoc_url=None)
 app.add_middleware(
@@ -372,6 +373,27 @@ async def api_realtime_token(char_id: str, request: Request,
         return JSONResponse({"error": str(exc)}, status_code=502)
     token["greeting"] = GREETING_TRIGGER
     return token
+
+
+@app.get("/background.jpg")
+async def background_image():
+    """Фонове зображення сторінок.
+
+    Лежить у корені проєкту (background.jpg) — так його зручно підмінити, не
+    залазячи в статику. Якщо файлу немає, сторінки просто лишаються з
+    градієнтним фоном.
+    """
+    for candidate in (
+        PROJECT_ROOT / "background.jpg",
+        PROJECT_ROOT / "background.jpeg",
+        PROJECT_ROOT / "background.png",
+        BASE_DIR / "static" / "background.jpg",
+    ):
+        if candidate.is_file():
+            media = "image/png" if candidate.suffix == ".png" else "image/jpeg"
+            return FileResponse(candidate, media_type=media,
+                                headers={"Cache-Control": "public, max-age=3600"})
+    raise HTTPException(status_code=404, detail="Фонове зображення не додано.")
 
 
 @app.websocket("/ws/quest/{char_id}")
