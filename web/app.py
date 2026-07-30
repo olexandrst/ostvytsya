@@ -33,7 +33,7 @@ from domovyk_quest.envfile import load_env_file
 # одразу при створенні). Працює однаково на Linux/macOS і Windows.
 _ENV_PATH, _ENV_KEYS = load_env_file()
 
-from domovyk_quest.characters import (  # noqa: E402  (після завантаження .env)
+from domovyk_quest.characters_store import (  # noqa: E402  (після завантаження .env)
     GEMINI_VOICE_LABELS,
     GEMINI_VOICES,
     OPENAI_VOICES,
@@ -46,6 +46,7 @@ from domovyk_quest.characters import (  # noqa: E402  (після заванта
     read_raw,
     save_raw,
     slugify,
+    storage_backend,
     validate_id,
 )
 from domovyk_quest.prompt import build_system_instruction  # noqa: E402
@@ -455,4 +456,9 @@ async def root_head():
 
 @app.get("/api/health")
 async def api_health():
-    return {"status": "ok", "model": model_name(), "auth_configured": auth.configured}
+    return {
+        "status": "ok",
+        "model": model_name(),
+        "auth_configured": auth.configured,
+        "storage": storage_backend(),
+    }

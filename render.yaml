@@ -37,3 +37,25 @@ services:
         sync: false
       - key: OPENAI_REALTIME_MODEL
         value: gpt-realtime-2.1-mini
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Опційно: постійне сховище персонажів (Render Managed PostgreSQL).
+#
+#  Render сам не має ефекту без двох кроків:
+#    1. розкоментуй блок `databases:` і `envVars: - key: DATABASE_URL` нижче;
+#    2. постав storage.render: yes у config.yaml (замість no).
+#  Без storage.render: yes навіть із прив'язаною базою застосунок і далі
+#  писатиме персонажів у файли — прапорець вмикає БД, а не сама наявність БД.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# databases:
+#   - name: ostvytsya-db
+#     plan: free
+#     databaseName: ostvytsya
+#     user: ostvytsya
+#
+# І в services → envVars додай:
+#   - key: DATABASE_URL
+#     fromDatabase:
+#       name: ostvytsya-db
+#       property: connectionString
