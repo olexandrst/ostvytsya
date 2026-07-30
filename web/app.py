@@ -317,7 +317,9 @@ async def api_update(char_id: str, request: Request,
                 build_character({**base, "system_prompt": ""})
             ).strip()
             if submitted == scenario_prompt:
-                payload["system_prompt"] = ""
+                # Прибираємо ключ, а не ставимо порожній рядок: його відсутність
+                # і означає «персонаж живе своїм YAML-сценарієм».
+                payload.pop("system_prompt", None)
         save_raw(char_id, payload, create=False)
     except CharacterError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)

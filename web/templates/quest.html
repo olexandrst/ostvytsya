@@ -4,10 +4,12 @@
 <div class="head-row">
   <div>
     <h1>{{ display_name }}</h1>
-    <p class="muted">{{ provider_label }} · голос: <code>{{ voice }}</code> ·
-      модель: <code>{{ model }}</code></p>
+    <div class="badges">
+      <span class="badge badge-accent">{{ provider_label }}</span>
+      <span class="badge">🎙 {{ voice }}</span>
+    </div>
   </div>
-  <a class="btn btn-ghost" href="/">← До списку</a>
+  <a class="btn btn-ghost" href="/">← Назад</a>
 </div>
 
 <div class="card quest">

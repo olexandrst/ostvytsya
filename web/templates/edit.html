@@ -2,84 +2,82 @@
 {% block title %}{{ "Новий персонаж" if creating else char.display_name }} · Оствиця{% endblock %}
 {% block content %}
 <div class="head-row">
-  <h1>{{ "Новий персонаж" if creating else "Редагування: " ~ char.display_name }}</h1>
-  <a class="btn btn-ghost" href="/">← До списку</a>
+  <h1>{{ "Новий персонаж" if creating else char.display_name }}</h1>
 </div>
 
 <div id="msg" class="alert" hidden></div>
 
-<form id="char-form" class="card stack" data-creating="{{ 'yes' if creating else 'no' }}"
+<form id="char-form" class="card" data-creating="{{ 'yes' if creating else 'no' }}"
       data-id="{{ char.id }}">
-  <label>Назва персонажа
-    <input type="text" name="display_name" value="{{ char.display_name }}" required
-           placeholder="Напр. Повітруля">
-  </label>
 
-  {% if creating %}
-  <label>Ідентифікатор <span class="muted">(латиницею; лишити порожнім — зробимо з назви)</span>
-    <input type="text" name="id" value="" placeholder="povitrulya" pattern="[a-z0-9][a-z0-9_-]*">
-  </label>
-  {% endif %}
+  {# Кнопки продубльовані зверху й знизу, щоб не гортати довгий промпт. #}
+  <div class="actions-bar actions-top">
+    <button class="btn btn-primary" type="submit">Зберегти</button>
+    {% if not creating %}
+    <a class="btn" href="/quest/{{ char.id }}">▶ Запустити</a>
+    {% endif %}
+    <span class="spacer"></span>
+    <a class="btn btn-ghost" href="/">← Назад</a>
+  </div>
 
-  <label>Модель <span class="muted">(якою персонаж говорить у браузері)</span>
-    <select name="provider" id="provider">
-      <option value="openai" {% if char.provider != "google" %}selected{% endif %}>OpenAI Realtime</option>
-      <option value="google" {% if char.provider == "google" %}selected{% endif %}>Google Gemini Live</option>
-    </select>
-  </label>
-
-  <div class="row">
-    <label data-voice-for="openai">Голос OpenAI
-      <select name="openai_voice">
-        {% for v in openai_voices %}
-        <option value="{{ v }}" {% if v == char.openai_voice %}selected{% endif %}>
-          {{ v }}{% if v in ("marin", "cedar") %} — найкраща якість{% endif %}
-        </option>
-        {% endfor %}
-      </select>
+  <div class="stack">
+    <label>Назва персонажа
+      <input type="text" name="display_name" value="{{ char.display_name }}" required
+             placeholder="Напр. Повітруля">
     </label>
-    <label data-voice-for="google">Голос Google
-      <select name="voice">
-        {% for v in gemini_voices %}
-        <option value="{{ v }}" {% if v == char.voice %}selected{% endif %}>{{ v }}</option>
-        {% endfor %}
-      </select>
+
+    {% if creating %}
+    <label>Ідентифікатор <span class="muted">(латиницею; лишити порожнім — зробимо з назви)</span>
+      <input type="text" name="id" value="" placeholder="povitrulya" pattern="[a-z0-9][a-z0-9_-]*">
     </label>
-    <label>Швидкість мовлення <span class="muted" data-speed-note hidden>(лише OpenAI)</span>
-      <input type="number" name="speech_speed" min="0.25" max="2" step="0.05"
-             value="{{ char.speech_speed }}">
+    {% endif %}
+
+    <div class="row row-3">
+      <label>Модель
+        <select name="provider" id="provider">
+          <option value="openai" {% if char.provider != "google" %}selected{% endif %}>OpenAI Realtime</option>
+          <option value="google" {% if char.provider == "google" %}selected{% endif %}>Google Gemini Live</option>
+        </select>
+      </label>
+      <label data-voice-for="openai">Голос
+        <select name="openai_voice">
+          {% for v in openai_voices %}
+          <option value="{{ v }}" {% if v == char.openai_voice %}selected{% endif %}>
+            {{ v }}{% if v in ("marin", "cedar") %} — найкраща якість{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label data-voice-for="google">Голос
+        <select name="voice">
+          {% for v in gemini_voices %}
+          <option value="{{ v }}" {% if v == char.voice %}selected{% endif %}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Швидкість мовлення <span class="muted" data-speed-note hidden>(лише OpenAI)</span>
+        <input type="number" name="speech_speed" min="0.25" max="2" step="0.05"
+               value="{{ char.speech_speed }}">
+      </label>
+    </div>
+
+    <label>Фінальне слово <span class="muted">(персонаж називає його в кінці квесту)</span>
+      <input type="text" name="win_word" value="{{ char.win_word }}" placeholder="Чарівниця">
+    </label>
+
+    <label>Промпт персонажа <span class="muted">— саме цей текст отримує модель</span>
+      <textarea name="system_prompt" rows="20"
+                placeholder="Опиши, хто це, як говорить і як веде квест…">{{ char.system_prompt }}</textarea>
     </label>
   </div>
 
-  <label>Фінальне слово <span class="muted">(персонаж називає його в кінці квесту)</span>
-    <input type="text" name="win_word" value="{{ char.win_word }}" placeholder="Чарівниця">
-  </label>
-
-  <label>Промпт персонажа <span class="muted">— саме цей текст отримує модель</span>
-    <textarea name="system_prompt" rows="18"
-              placeholder="Опиши, хто це, як говорить і як веде квест…">{{ char.system_prompt }}</textarea>
-  </label>
-
-  {% if from_scenario %}
-  <p class="alert alert-info">
-    Цей промпт зібрано з YAML-сценарію персонажа (загадки, підказки, директиви
-    у <code>characters/{{ char.id }}.yaml</code>). Поки ти його не змінюєш, він
-    оновлюватиметься автоматично слідом за сценарієм.
-    <strong>Щойно відредагуєш текст тут — збережеться саме твоя версія</strong>,
-    і сценарій із YAML більше не використовуватиметься.
-  </p>
-  {% elif not creating %}
-  <p class="alert alert-info">
-    Це власний промпт персонажа — модель отримує рівно цей текст.
-    Щоб повернутися до YAML-сценарію, <strong>очисти поле</strong> й збережи.
-  </p>
-  {% endif %}
-
-  <div class="actions">
+  <div class="actions-bar actions-bottom">
     <button class="btn btn-primary" type="submit">Зберегти</button>
     {% if not creating %}
-    <a class="btn" href="/quest/{{ char.id }}">▶ Запустити квест</a>
+    <a class="btn" href="/quest/{{ char.id }}">▶ Запустити</a>
     {% endif %}
+    <span class="spacer"></span>
+    <a class="btn btn-ghost" href="/">← Назад</a>
   </div>
 </form>
 
