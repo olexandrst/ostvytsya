@@ -99,15 +99,17 @@ body {
 body::before {
   content: "";
   position: fixed;
-  inset: -40px;
+  inset: -20px;
   z-index: -2;
   background: url("/background.jpg") center / cover no-repeat;
-  filter: blur(16px) saturate(1.05);
-  transform: scale(1.08);
+  /* Легка м'якість, а не «матове скло»: сюжет фото має лишатися видимим. */
+  filter: blur(3px) saturate(1.08);
+  transform: scale(1.03);
   pointer-events: none;
 }
 
-/* Напівпрозора бежева завіса поверх фото — щоб текст і картки читалися. */
+/* Дуже легка завіса: трохи пригашує фон під текстом, але не з'їдає фото.
+   Картки й так мають власний непрозорий фон, тож читабельність не страдає. */
 body::after {
   content: "";
   position: fixed;
@@ -115,17 +117,17 @@ body::after {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(1000px 600px at 20% 0%, rgba(255, 252, 245, .35), transparent 65%),
-    linear-gradient(165deg, rgba(247, 241, 230, .55) 0%, rgba(239, 228, 210, .6) 60%,
-                    rgba(232, 220, 198, .66) 100%);
+    radial-gradient(900px 500px at 20% 0%, rgba(255, 252, 245, .3), transparent 70%),
+    linear-gradient(180deg, rgba(247, 241, 230, .28) 0%, rgba(239, 228, 210, .16) 45%,
+                    rgba(232, 220, 198, .24) 100%);
 }
 
 @media (prefers-color-scheme: dark) {
-  body::before { filter: blur(16px) saturate(.9) brightness(.65); }
+  body::before { filter: blur(3px) saturate(.95) brightness(.7); }
   body::after {
     background:
-      radial-gradient(1000px 600px at 20% 0%, rgba(30, 26, 20, .55), transparent 65%),
-      linear-gradient(165deg, rgba(26, 23, 18, .84) 0%, rgba(34, 29, 22, .88) 100%);
+      radial-gradient(900px 500px at 20% 0%, rgba(24, 21, 16, .45), transparent 70%),
+      linear-gradient(180deg, rgba(22, 19, 15, .55) 0%, rgba(26, 23, 18, .45) 100%);
   }
 }
 
@@ -136,13 +138,16 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; justify-content: space-between;
   gap: 1rem; padding: .85rem 1.5rem;
-  background: rgba(255, 253, 249, .82);
-  backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--line);
+  background: rgba(255, 253, 249, .55);
+  backdrop-filter: blur(16px) saturate(1.1);
+  border-bottom: 1px solid rgba(228, 216, 196, .6);
   box-shadow: var(--shadow-sm);
 }
 @media (prefers-color-scheme: dark) {
-  .topbar { background: rgba(36, 32, 26, .85); }
+  .topbar {
+    background: rgba(28, 24, 19, .6);
+    border-bottom-color: rgba(58, 51, 42, .6);
+  }
 }
 .brand {
   font-weight: 800; font-size: 1.15rem; letter-spacing: -.01em;
