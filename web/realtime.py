@@ -22,7 +22,8 @@ from domovyk_quest.config import Character
 from domovyk_quest.prompt import build_system_instruction
 
 CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets"
-DEFAULT_MODEL = "gpt-realtime-2.1"
+# mini — та сама якість голосу, але помітно дешевша за велику модель.
+DEFAULT_MODEL = "gpt-realtime-2.1-mini"
 # Скільки живе ephemeral-токен. Його вистачає лише на встановлення з'єднання —
 # сама розмова після цього триває стільки, скільки треба.
 TOKEN_TTL_S = 600

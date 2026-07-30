@@ -6,6 +6,23 @@
   const msg = document.getElementById("msg");
   const creating = form.dataset.creating === "yes";
 
+  // Показуємо лише той список голосів, що належить обраній моделі.
+  const providerSel = document.getElementById("provider");
+  function syncVoiceFields() {
+    const provider = providerSel.value;
+    form.querySelectorAll("[data-voice-for]").forEach((el) => {
+      el.hidden = el.dataset.voiceFor !== provider;
+    });
+    // Швидкість мовлення підтримує лише OpenAI — поле лишаємо активним, щоб
+    // значення не загубилося при перемиканні, але позначаємо приміткою.
+    const note = form.querySelector("[data-speed-note]");
+    if (note) note.hidden = provider !== "google";
+  }
+  if (providerSel) {
+    providerSel.addEventListener("change", syncVoiceFields);
+    syncVoiceFields();
+  }
+
   function show(text, kind) {
     msg.textContent = text;
     msg.className = "alert alert-" + kind;

@@ -19,7 +19,7 @@ import secrets
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -35,6 +35,7 @@ _ENV_PATH, _ENV_KEYS = load_env_file()
 from domovyk_quest.characters import (  # noqa: E402  (після завантаження .env)
     GEMINI_VOICES,
     OPENAI_VOICES,
+    PROVIDERS,
     CharacterError,
     build_character,
     clone_character,
@@ -48,6 +49,7 @@ from domovyk_quest.characters import (  # noqa: E402  (після заванта
 from domovyk_quest.prompt import build_system_instruction  # noqa: E402
 
 from .auth import Auth, session_secret
+from .gemini_live import model_name as gemini_model_name, run_quest as run_gemini_quest
 from .realtime import GREETING_TRIGGER, RealtimeError, create_client_secret, model_name
 
 log = logging.getLogger("ostvytsya.web")
@@ -164,6 +166,7 @@ async def character_new(request: Request, user: str = Depends(require_login)):
         "char": {
             "id": "",
             "display_name": "",
+            "provider": "openai",
             "openai_voice": "marin",
             "voice": "Charon",
             "speech_speed": 1.0,
@@ -197,6 +200,7 @@ async def character_edit(char_id: str, request: Request,
         "char": {
             "id": char_id,
             "display_name": raw.get("display_name") or char_id,
+            "provider": raw.get("provider") or "openai",
             "openai_voice": raw.get("openai_voice") or "marin",
             "voice": raw.get("voice") or "Charon",
             "speech_speed": raw.get("speech_speed") or 1.0,
@@ -218,13 +222,18 @@ async def quest_page(char_id: str, request: Request,
         raw = read_raw(char_id)
     except CharacterError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    provider = (raw.get("provider") or "openai").strip()
+    is_google = provider == "google"
     return templates.TemplateResponse(request, "quest.html", {
         "user": user,
         "csrf": csrf_token(request),
         "char_id": char_id,
         "display_name": raw.get("display_name") or char_id,
-        "voice": raw.get("openai_voice") or "marin",
-        "model": model_name(),
+        "provider": provider,
+        "provider_label": "Google Gemini" if is_google else "OpenAI",
+        "voice": (raw.get("voice") or "Charon") if is_google
+                 else (raw.get("openai_voice") or "marin"),
+        "model": gemini_model_name() if is_google else model_name(),
     })
 
 
@@ -239,6 +248,8 @@ def _payload_from_form(form: dict[str, Any], base: Optional[dict[str, Any]] = No
     """
     data = dict(base or {})
     data["display_name"] = (form.get("display_name") or "").strip()
+    provider = (form.get("provider") or data.get("provider") or "openai").strip()
+    data["provider"] = provider if provider in PROVIDERS else "openai"
     data["openai_voice"] = (form.get("openai_voice") or "marin").strip()
     data["voice"] = (form.get("voice") or data.get("voice") or "Charon").strip()
     data["system_prompt"] = (form.get("system_prompt") or "").strip()
@@ -265,6 +276,10 @@ def _payload_from_form(form: dict[str, Any], base: Optional[dict[str, Any]] = No
     data.setdefault("style", [])
     data.setdefault("intro", "")
     data.setdefault("win", "")
+    # Порожній власний промпт у файлі не тримаємо: його відсутність і означає
+    # «персонаж живе своїм YAML-сценарієм».
+    if not data.get("system_prompt"):
+        data.pop("system_prompt", None)
     return data
 
 
@@ -355,6 +370,35 @@ async def api_realtime_token(char_id: str, request: Request,
         return JSONResponse({"error": str(exc)}, status_code=502)
     token["greeting"] = GREETING_TRIGGER
     return token
+
+
+@app.websocket("/ws/quest/{char_id}")
+async def ws_quest(websocket: WebSocket, char_id: str):
+    """Голосовий квест через Gemini Live (провайдер google).
+
+    OpenAI-персонажі йдуть напряму з браузера по WebRTC, а Gemini працює по
+    WebSocket із сирим PCM — його проводимо через сервер, щоб не світити ключ.
+    """
+    # WebSocket не проходить через Depends(require_login) — перевіряємо самі.
+    if not websocket.session.get("user"):
+        await websocket.close(code=4401)
+        return
+    try:
+        character = build_character(read_raw(char_id))
+    except CharacterError:
+        await websocket.close(code=4404)
+        return
+
+    await websocket.accept()
+    try:
+        await run_gemini_quest(websocket, character)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass  # уже закрито
 
 
 @app.get("/api/health")
