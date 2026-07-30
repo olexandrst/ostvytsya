@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Деплой веб-режиму на Render (https://render.com).
+#
+#  Порт слухається за змінною PORT, яку Render задає сам, і на 0.0.0.0 —
+#  інакше платформа не бачить сервіс («No open ports detected on 0.0.0.0»).
+#
+#  Після створення сервісу впиши секрети в Render → Environment:
+#      OPENAI_API_KEY          — ключ OpenAI
+#      GEMINI_API_KEY          — лише якщо є персонажі з моделлю Google
+#      OSTVYTSYA_WEB_PASSWORD  — пароль для входу
+#  (OSTVYTSYA_WEB_SECRET Render згенерує сам — див. generateValue нижче.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: ostvytsya-web
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-web.txt
+    startCommand: python -m web
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      # Ключ підпису сесійної куки: Render згенерує випадковий і збереже його,
+      # тож сесії живуть між перезапусками.
+      - key: OSTVYTSYA_WEB_SECRET
+        generateValue: true
+      - key: OSTVYTSYA_WEB_USER
+        value: admin
+      # Секрети НЕ тримаємо у файлі — задай їх у панелі Render.
+      - key: OSTVYTSYA_WEB_PASSWORD
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_REALTIME_MODEL
+        value: gpt-realtime-2.1-mini

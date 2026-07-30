@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               RedirectResponse, Response)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -57,13 +58,31 @@ log = logging.getLogger("ostvytsya.web")
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 
+def _https_only() -> bool:
+    """Чи позначати сесійну куку як Secure (лише для HTTPS).
+
+    На хостингах (Render та ін.) сайт завжди за HTTPS, тож куку варто захистити.
+    Локально по http це вимкнено, інакше вхід просто не працював би.
+    Можна задати вручну: OSTVYTSYA_WEB_HTTPS_ONLY=true|false.
+    """
+    import os
+    explicit = (os.environ.get("OSTVYTSYA_WEB_HTTPS_ONLY") or "").strip().lower()
+    if explicit in {"1", "true", "yes", "on"}:
+        return True
+    if explicit in {"0", "false", "no", "off"}:
+        return False
+    return bool(os.environ.get("PORT") or os.environ.get("RENDER")
+                or os.environ.get("RAILWAY_ENVIRONMENT")
+                or os.environ.get("FLY_APP_NAME") or os.environ.get("DYNO"))
+
+
 app = FastAPI(title="Оствиця · квест-агент", docs_url=None, redoc_url=None)
 app.add_middleware(
     SessionMiddleware,
     secret_key=session_secret(),
     session_cookie="ostvytsya_session",
-    same_site="lax",   # захист від міжсайтових запитів
-    https_only=False,  # у продакшені за HTTPS постав true
+    same_site="lax",           # захист від міжсайтових запитів
+    https_only=_https_only(),  # на хостингу — Secure-кука
 )
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -423,6 +442,12 @@ async def ws_quest(websocket: WebSocket, char_id: str):
             await websocket.close()
         except RuntimeError:
             pass  # уже закрито
+
+
+@app.head("/")
+async def root_head():
+    """Health-check хостингів (Render шле HEAD /) — інакше вони бачать 405."""
+    return Response(status_code=200)
 
 
 @app.get("/api/health")
