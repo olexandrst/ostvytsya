@@ -2,40 +2,48 @@
 {% block title %}Персонажі · Оствиця{% endblock %}
 {% block content %}
 <div class="head-row">
-  <div>
-    <h1>Персонажі</h1>
-    <p class="muted">Модель: <code>{{ model }}</code> · сценарії спільні з консольним режимом</p>
-  </div>
+  <h1>Персонажі</h1>
   <a class="btn btn-primary" href="/characters/new">+ Новий персонаж</a>
 </div>
 
 {% if not characters %}
-  <div class="card"><p class="muted">Персонажів ще немає. Створи першого!</p></div>
+  <div class="card empty">
+    <span class="empty-icon">🌳</span>
+    <p class="muted">Персонажів ще немає. Створи першого — і він одразу оживе.</p>
+    <a class="btn btn-primary" href="/characters/new">+ Новий персонаж</a>
+  </div>
 {% endif %}
 
 <div class="grid">
   {% for c in characters %}
   <div class="card char" data-id="{{ c.id }}">
     <div class="char-head">
-      <h2>{{ c.display_name }}</h2>
-      <code class="muted">{{ c.id }}</code>
+      <div class="avatar">{{ c.display_name[0] }}</div>
+      <div class="char-title">
+        <h2>{{ c.display_name }}</h2>
+        <code>{{ c.id }}</code>
+      </div>
     </div>
-    <dl class="meta">
-      <div><dt>Модель</dt><dd>{{ c.provider_label }}</dd></div>
-      <div><dt>Голос</dt><dd>{{ c.web_voice }}</dd></div>
-      <div><dt>Сценарій</dt>
-        <dd>{% if c.custom_prompt %}вільний промпт{% elif c.questions %}{{ c.questions }} загадк(и){% else %}—{% endif %}</dd></div>
-      {% if c.wake_words %}
-      <div><dt>Кодове слово</dt><dd>{{ c.wake_words[0] }}</dd></div>
+
+    <div class="badges">
+      <span class="badge badge-accent">{{ c.provider_label }}</span>
+      <span class="badge">🎙 {{ c.web_voice }}</span>
+      {% if c.custom_prompt %}
+        <span class="badge badge-gold">вільний промпт</span>
+      {% elif c.questions %}
+        <span class="badge badge-gold">{{ c.questions }} загадк{% if c.questions == 1 %}а{% elif c.questions < 5 %}и{% else %}ок{% endif %}</span>
       {% endif %}
-    </dl>
+    </div>
+
     <div class="actions">
       <a class="btn btn-primary" href="/quest/{{ c.id }}">▶ Запустити квест</a>
-      <a class="btn" href="/characters/{{ c.id }}/edit">Редагувати</a>
-      <button class="btn js-clone" data-id="{{ c.id }}"
-              data-name="{{ c.display_name }}">Клонувати</button>
-      <button class="btn btn-danger js-delete" data-id="{{ c.id }}"
-              data-name="{{ c.display_name }}">Видалити</button>
+      <div class="char-actions-row">
+        <a class="btn" href="/characters/{{ c.id }}/edit">Редагувати</a>
+        <button class="btn js-clone" data-id="{{ c.id }}"
+                data-name="{{ c.display_name }}">Клонувати</button>
+        <button class="btn btn-danger js-delete" data-id="{{ c.id }}"
+                data-name="{{ c.display_name }}">Видалити</button>
+      </div>
     </div>
   </div>
   {% endfor %}
