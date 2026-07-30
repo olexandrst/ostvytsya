@@ -92,6 +92,16 @@ def main(argv=None) -> int:
         print("⚠️  Не задано OSTVYTSYA_WEB_SECRET — після кожного перезапуску "
               "сервісу всіх користувачів викидатиме на сторінку входу.", file=sys.stderr)
 
+    from domovyk_quest.config import render_storage_enabled
+    if render_storage_enabled():
+        print("🗄️  Сховище персонажів: Render Managed PostgreSQL "
+              "(config.yaml → storage.render: yes)")
+        if not (os.environ.get("DATABASE_URL") or "").strip():
+            print("⚠️  DATABASE_URL не задано — з'єднання з PostgreSQL не вдасться. "
+                  "Прив'яжи Managed PostgreSQL до сервісу в Render.", file=sys.stderr)
+    else:
+        print("🗄️  Сховище персонажів: файли characters/*.yaml")
+
     if _hosted():
         print(f"🌐 Слухаю {args.host}:{args.port} (хостинг сам віддасть публічну адресу)")
     else:

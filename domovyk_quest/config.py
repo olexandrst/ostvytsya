@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
@@ -301,3 +302,43 @@ def _validate(cfg: AppConfig) -> None:
             "У персонажа має бути хоча б одна загадка (questions) "
             "або вільний промпт (system_prompt)."
         )
+
+
+# ── Сховище персонажів веб-режиму (файли або Render Managed PostgreSQL) ───────
+
+@functools.lru_cache(maxsize=8)
+def _read_top_level_yaml(path_str: str) -> dict[str, Any]:
+    path = Path(path_str)
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def render_storage_enabled(config_path: Optional[str | os.PathLike] = None) -> bool:
+    """Чи зберігати персонажів веб-режиму в Render Managed PostgreSQL.
+
+    Читається з config.yaml → storage.render: yes/no. Типово (секції немає,
+    файла немає, або render: no) — стара поведінка: персонажі зберігаються як
+    файли characters/*.yaml, як і раніше.
+
+    Це навмисно ЛЕГКА перевірка без повної валідації AppConfig: веб-режим
+    працює з багатьма персонажами одночасно, а не з одним обраним, як консоль,
+    тож переганяти цей прапорець крізь load_config() (який вимагає конкретного
+    character_file) було б зайвою залежністю.
+
+    Результат кешується (config.yaml не перечитується на кожен запит) — зміна
+    значення застосовується після перезапуску, як і решта конфігурації.
+    """
+    path = Path(config_path) if config_path else (
+        Path(__file__).resolve().parent.parent / "config.yaml"
+    )
+    raw = _read_top_level_yaml(str(path))
+    storage = raw.get("storage")
+    if not isinstance(storage, dict):
+        return False
+    return bool(storage.get("render", False))
