@@ -34,6 +34,7 @@ from domovyk_quest.envfile import load_env_file
 _ENV_PATH, _ENV_KEYS = load_env_file()
 
 from domovyk_quest.characters import (  # noqa: E402  (після завантаження .env)
+    GEMINI_VOICE_LABELS,
     GEMINI_VOICES,
     OPENAI_VOICES,
     PROVIDERS,
@@ -196,6 +197,7 @@ async def character_new(request: Request, user: str = Depends(require_login)):
         },
         "openai_voices": OPENAI_VOICES,
         "gemini_voices": GEMINI_VOICES,
+        "gemini_voice_labels": GEMINI_VOICE_LABELS,
         "from_scenario": False,
     })
 
@@ -230,6 +232,7 @@ async def character_edit(char_id: str, request: Request,
         },
         "openai_voices": OPENAI_VOICES,
         "gemini_voices": GEMINI_VOICES,
+        "gemini_voice_labels": GEMINI_VOICE_LABELS,
         # Промпт зібрано зі сценарію (а не написаний вручну) — про це варто сказати.
         "from_scenario": has_scenario and not own_prompt,
     })

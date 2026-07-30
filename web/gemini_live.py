@@ -250,4 +250,9 @@ async def run_quest(websocket, character: Character) -> None:
         raise
     except Exception as exc:  # noqa: BLE001
         log.error("Gemini Live: %s", exc)
-        await bridge.send_event(type="error", message=f"Помилка Gemini: {exc}")
+        text = str(exc)
+        # Модель відхилила голос — підказуємо, що робити, замість сирого 1007.
+        if "voice" in text.lower() and "not available" in text.lower():
+            text = (f"Модель не приймає голос «{character.voice}». "
+                    "Вибери інший у редакторі персонажа (поле «Голос»).")
+        await bridge.send_event(type="error", message=f"Помилка Gemini: {text}")

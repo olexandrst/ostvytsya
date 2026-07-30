@@ -233,7 +233,7 @@ uvicorn запускається з `proxy_headers` — інакше за зво
 | Модель | Голоси | Як працює |
 |---|---|---|
 | **OpenAI Realtime** (`gpt-realtime-2.1-mini`) | `marin`, `cedar` (найякісніші), `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse` | WebRTC напряму з браузера |
-| **Google Gemini Live** | `Charon`, `Enceladus`, `Aoede`, `Leda`, `Laomedeia`, `Pulcherrima`, `Zephyr`, `Kore`, `Puck`… | WebSocket через міст на сервері |
+| **Google Gemini Live** | усі 30 офіційних: `Charon`, `Enceladus`, `Aoede`, `Leda`, `Laomedeia`, `Pulcherrima`, `Sadachbia`, `Sulafat`, `Zephyr`… (у редакторі — з описом характеру) | WebSocket через міст на сервері |
 
 Список голосів у редакторі перемикається сам — видно лише той, що належить
 обраній моделі. Швидкість мовлення (0.25–2.0) підтримує лише OpenAI.

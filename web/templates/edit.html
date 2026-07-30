@@ -51,7 +51,9 @@
       <label data-voice-for="google">Голос
         <select name="voice">
           {% for v in gemini_voices %}
-          <option value="{{ v }}" {% if v == char.voice %}selected{% endif %}>{{ v }}</option>
+          <option value="{{ v }}" {% if v == char.voice %}selected{% endif %}>
+            {{ v }}{% if gemini_voice_labels.get(v) %} — {{ gemini_voice_labels[v] }}{% endif %}
+          </option>
           {% endfor %}
         </select>
       </label>

@@ -27,10 +27,42 @@ OPENAI_VOICES = (
 )
 
 # Голоси Gemini Native Audio (консоль + веб-режим із провайдером google).
-GEMINI_VOICES = (
-    "Charon", "Enceladus", "Aoede", "Leda", "Laomedeia", "Pulcherrima",
-    "Autonoe", "Zephyr", "Sadachbita", "Kore", "Puck", "Fenrir",
-)
+# ПОВНИЙ офіційний список — 30 голосів. Назви мусять збігатися дослівно, інакше
+# Gemini закриває сесію з помилкою 1007 «Requested voice … is not available».
+# Спершу ті, що найкраще пасують казковим персонажам.
+GEMINI_VOICE_LABELS = {
+    "Charon": "інформативний",
+    "Enceladus": "з придихом",
+    "Aoede": "легкий, повітряний",
+    "Leda": "юний",
+    "Laomedeia": "піднесений",
+    "Pulcherrima": "рішучий",
+    "Autonoe": "яскравий",
+    "Zephyr": "яскравий",
+    "Sadachbia": "жвавий",
+    "Sulafat": "теплий",
+    "Kore": "впевнений",
+    "Puck": "жвавий",
+    "Fenrir": "запальний",
+    "Orus": "впевнений",
+    "Callirrhoe": "спокійний",
+    "Iapetus": "чистий",
+    "Umbriel": "спокійний",
+    "Algieba": "м'який",
+    "Despina": "м'який",
+    "Erinome": "чистий",
+    "Algenib": "хрипкуватий",
+    "Rasalgethi": "інформативний",
+    "Achernar": "тихий",
+    "Alnilam": "твердий",
+    "Schedar": "рівний",
+    "Gacrux": "зрілий",
+    "Achird": "дружній",
+    "Zubenelgenubi": "буденний",
+    "Vindemiatrix": "лагідний",
+    "Sadaltager": "розважливий",
+}
+GEMINI_VOICES = tuple(GEMINI_VOICE_LABELS)
 
 # Якою моделлю персонаж говорить у браузері.
 PROVIDERS = ("openai", "google")
