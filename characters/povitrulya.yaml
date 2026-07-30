@@ -32,7 +32,7 @@ display_name: "Повітруля"
 
 # Голос Gemini Native Audio. Треба грайливий, дзвінкий, дівчачий — як лісова
 # мавка-пустунка. Якщо не зайде — спробуй одним рядком: "Laomedeia" (upbeat),
-# "Autonoe" (bright), "Zephyr" (bright), "Sadachbita" (lively).
+# "Autonoe" (bright), "Zephyr" (bright), "Sadachbia" (lively).
 voice: "Pulcherrima"
 language: "uk-UA"
 
