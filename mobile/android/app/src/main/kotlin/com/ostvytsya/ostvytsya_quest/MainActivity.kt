@@ -1,5 +1,8 @@
 package com.ostvytsya.ostvytsya_quest
 
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -10,6 +13,9 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Місток Dart ⇄ Android для двох речей, які потребують нативного коду:
@@ -58,6 +64,13 @@ class MainActivity : FlutterActivity() {
                         File(filesDir, OstvytsyaApplication.CRASH_LOG_FILE).delete()
                         result.success(null)
                     }
+                    "getLastExitReason" -> {
+                        result.success(lastExitReasonText())
+                    }
+                    "acknowledgeExitReason" -> {
+                        acknowledgeExitReason()
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             } catch (t: Throwable) {
@@ -73,5 +86,67 @@ class MainActivity : FlutterActivity() {
         } else {
             startService(intent)
         }
+    }
+
+    /**
+     * Причина останнього завершення процесу від самої системи — це працює
+     * навіть для СПРАВЖНІХ нативних падінь (SIGSEGV у бібліотеці типу
+     * flutter_sound), які Thread.setDefaultUncaughtExceptionHandler у
+     * OstvytsyaApplication не бачить, бо це не Java-виняток. Доступно з
+     * Android 11 (API 30). Показує лише НОВУ причину — не старішу за ту,
+     * що вже підтверджена через acknowledgeExitReason().
+     */
+    private fun lastExitReasonText(): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val infos = am.getHistoricalProcessExitReasons(packageName, 0, 5)
+        if (infos.isEmpty()) return null
+        val info = infos[0]
+        val lastAck = prefs().getLong(PREF_LAST_ACK_TS, 0L)
+        if (info.timestamp <= lastAck) return null
+
+        val sb = StringBuilder()
+        sb.append("Причина завершення: ${reasonName(info.reason)} (код ${info.reason})\n")
+        sb.append("Опис: ${info.description}\n")
+        sb.append("Час: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(info.timestamp))}\n")
+        try {
+            info.traceInputStream?.use { stream ->
+                val trace = stream.bufferedReader().readText()
+                if (trace.isNotBlank()) {
+                    sb.append("\n--- Трасування ---\n").append(trace.take(8000))
+                }
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Не вдалося прочитати трасування виходу", t)
+        }
+        return sb.toString()
+    }
+
+    private fun acknowledgeExitReason() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val infos = am.getHistoricalProcessExitReasons(packageName, 0, 1)
+        val ts = infos.firstOrNull()?.timestamp ?: return
+        prefs().edit().putLong(PREF_LAST_ACK_TS, ts).apply()
+    }
+
+    private fun prefs() = getSharedPreferences("ostvytsya_diagnostics", MODE_PRIVATE)
+
+    private fun reasonName(reason: Int): String = when (reason) {
+        ApplicationExitInfo.REASON_CRASH -> "CRASH (виняток у Java/Kotlin коді)"
+        ApplicationExitInfo.REASON_CRASH_NATIVE -> "CRASH_NATIVE (нативний збій, напр. у бібліотеці)"
+        ApplicationExitInfo.REASON_ANR -> "ANR (застосунок не відповідав)"
+        ApplicationExitInfo.REASON_LOW_MEMORY -> "LOW_MEMORY"
+        ApplicationExitInfo.REASON_USER_REQUESTED -> "USER_REQUESTED"
+        ApplicationExitInfo.REASON_USER_STOPPED -> "USER_STOPPED"
+        ApplicationExitInfo.REASON_SIGNALED -> "SIGNALED"
+        ApplicationExitInfo.REASON_EXIT_SELF -> "EXIT_SELF"
+        ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "DEPENDENCY_DIED"
+        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "EXCESSIVE_RESOURCE_USAGE"
+        else -> "код=$reason"
+    }
+
+    companion object {
+        private const val PREF_LAST_ACK_TS = "last_ack_exit_ts"
     }
 }

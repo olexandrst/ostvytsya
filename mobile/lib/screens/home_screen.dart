@@ -34,8 +34,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _checkLastCrash() async {
-    final log = await _crashLog.readLastCrash();
-    if (log == null || log.trim().isEmpty || !mounted) return;
+    final javaLog = await _crashLog.readLastCrash();
+    final exitReason = await _crashLog.readLastExitReason();
+
+    final parts = <String>[];
+    if (exitReason != null && exitReason.trim().isNotEmpty) {
+      parts.add('== Причина виходу процесу (система) ==\n$exitReason');
+    }
+    if (javaLog != null && javaLog.trim().isNotEmpty) {
+      parts.add('== Необроблений Java/Kotlin-виняток ==\n$javaLog');
+    }
+    if (parts.isEmpty || !mounted) return;
+    final log = parts.join('\n\n');
+
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -62,6 +73,7 @@ class _HomeScreenState extends State<HomeScreen> {
           TextButton(
             onPressed: () {
               _crashLog.clearLastCrash();
+              _crashLog.acknowledgeExitReason();
               Navigator.pop(ctx);
             },
             child: const Text('Закрити'),
