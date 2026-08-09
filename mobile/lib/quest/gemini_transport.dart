@@ -30,8 +30,10 @@ class GeminiTransport implements QuestTransport {
   StreamSubscription? _sub;
   bool _setupComplete = false;
   bool _receivedAnyAudio = false;
-  bool _sentRecoveryCue = false;
+  int _recoveryAttempts = 0;
   Timer? _recoveryTimer;
+
+  static const _maxRecoveryAttempts = 2;
 
   GeminiTransport(this.character, this.apiKey);
 
@@ -107,6 +109,10 @@ class GeminiTransport implements QuestTransport {
       // приходив повністю, а аудіо — 2 байти за весь хід). Тому для 3.1
       // шлемо привітання як realtime_input.text — той самий канал, яким
       // іде живий голос гравця і який надійно генерує аудіо-відповідь.
+      // Перед цим ще й "будимо" аудіо-канал коротким шматком тиші —
+      // достеменно той самий шлях, яким генерується голос під час
+      // звичайного ходу з мікрофону.
+      _sendSilentAudioPrimer();
       _send({
         'realtime_input': {'text': kGreetingTrigger},
       });
@@ -128,17 +134,32 @@ class GeminiTransport implements QuestTransport {
     });
   }
 
+  /// Коротка "тиша" через realtime_input.audio — той самий канал, яким іде
+  /// живий голос гравця і який стабільно генерує аудіо-відповідь. Ціль —
+  /// активувати аудіо-шлях моделі ще до текстового привітання (обхід
+  /// холодного старту gemini-3.1-flash-live-preview).
+  void _sendSilentAudioPrimer() {
+    const durationMs = 400;
+    final sampleCount = (inputSampleRate * durationMs / 1000).round();
+    sendAudio(Uint8List(sampleCount * 2)); // PCM16 нулі = тиша
+  }
+
   /// Відомий, визнаний самим Google баг якості gemini-3.1-flash-live-preview
   /// (google-gemini/cookbook issue #1197): перший хід інколи взагалі не
-  /// озвучується (холодний старт/самоперебивання). Спільнота повідомляє про
-  /// робочий обхід — надіслати ще один короткий сигнал через
-  /// realtime_input.text, якщо за пару секунд аудіо так і не з'явилось.
-  /// Лише ОДНА спроба відновлення за весь квест.
+  /// озвучується (холодний старт/самоперебивання) — на практиці спрацьовує
+  /// "через раз". Тому пробуємо відновитись до [_maxRecoveryAttempts] разів:
+  /// щоразу коротка тиша + короткий сигнал через realtime_input.text, якщо
+  /// аудіо так і не з'явилось.
   void _scheduleRecoveryCueIfSilent() {
     _recoveryTimer?.cancel();
     _recoveryTimer = Timer(const Duration(milliseconds: 2500), () {
-      if (_sentRecoveryCue || _receivedAnyAudio || _channel == null) return;
-      _sentRecoveryCue = true;
+      if (_receivedAnyAudio ||
+          _channel == null ||
+          _recoveryAttempts >= _maxRecoveryAttempts) {
+        return;
+      }
+      _recoveryAttempts++;
+      _sendSilentAudioPrimer();
       _send({
         'realtime_input': {
           'text':
@@ -147,6 +168,7 @@ class GeminiTransport implements QuestTransport {
               'сказав — гравець тебе поки що не почув.]',
         },
       });
+      _scheduleRecoveryCueIfSilent();
     });
   }
 
