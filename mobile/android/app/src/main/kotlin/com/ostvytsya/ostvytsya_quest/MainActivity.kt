@@ -9,6 +9,7 @@ import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 /**
  * Місток Dart ⇄ Android для двох речей, які потребують нативного коду:
@@ -47,6 +48,14 @@ class MainActivity : FlutterActivity() {
                             Uri.parse("package:$packageName")
                         )
                         startActivity(intent)
+                        result.success(null)
+                    }
+                    "getLastCrashLog" -> {
+                        val file = File(filesDir, OstvytsyaApplication.CRASH_LOG_FILE)
+                        result.success(if (file.exists()) file.readText() else null)
+                    }
+                    "clearLastCrashLog" -> {
+                        File(filesDir, OstvytsyaApplication.CRASH_LOG_FILE).delete()
                         result.success(null)
                     }
                     else -> result.notImplemented()

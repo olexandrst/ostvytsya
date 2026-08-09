@@ -11,7 +11,7 @@
 
     <application
         android:label="ostvytsya_quest"
-        android:name="${applicationName}"
+        android:name=".OstvytsyaApplication"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

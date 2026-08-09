@@ -20,6 +20,13 @@ class AudioPipeline {
   Timer? _unmuteTimer;
   final _stopwatch = Stopwatch();
 
+  // Плеєр стартує асинхронно (нативний виклик), а перший шматок голосу
+  // персонажа може прийти від транспорту раніше, ніж startPlayerFromStream
+  // встигне завершитися — годування ще не готового плеєра валило нативний
+  // код. Тож до готовності буферизуємо шматки й віддаємо їх по черзі.
+  bool _playerReady = false;
+  final List<(Uint8List, int)> _pendingChunks = [];
+
   bool get isMuted => _muted;
 
   Future<void> open() async {
@@ -42,6 +49,8 @@ class AudioPipeline {
     await open();
     _muted = false;
     _queuedUntil = 0;
+    _playerReady = false;
+    _pendingChunks.clear();
 
     _micRaw = StreamController<Uint8List>();
     _micSub = _micRaw!.stream.listen((data) {
@@ -63,12 +72,28 @@ class AudioPipeline {
       sampleRate: outputSampleRate,
       bufferSize: 4096,
     );
+
+    _playerReady = true;
+    final pending = List<(Uint8List, int)>.from(_pendingChunks);
+    _pendingChunks.clear();
+    for (final (chunk, rate) in pending) {
+      await _feedNow(chunk, rate);
+    }
   }
 
   /// Додати шматок голосу персонажа в чергу відтворення й продовжити
-  /// «заглушення» мікрофону, поки черга не спорожніє.
+  /// «заглушення» мікрофону, поки черга не спорожніє. Якщо плеєр ще не
+  /// стартував (гонитва з першим шматком від транспорту) — буферизуємо.
   Future<void> playAgentChunk(Uint8List pcm16, int sampleRate) async {
     if (!_opened) return;
+    if (!_playerReady) {
+      _pendingChunks.add((pcm16, sampleRate));
+      return;
+    }
+    await _feedNow(pcm16, sampleRate);
+  }
+
+  Future<void> _feedNow(Uint8List pcm16, int sampleRate) async {
     _muteFor(pcm16.length, sampleRate);
     try {
       await _player.feedUint8FromStream(pcm16);
@@ -115,6 +140,8 @@ class AudioPipeline {
   Future<void> stop() async {
     _unmuteTimer?.cancel();
     _unmuteTimer = null;
+    _playerReady = false;
+    _pendingChunks.clear();
     try {
       await _recorder.stopRecorder();
     } catch (_) {}

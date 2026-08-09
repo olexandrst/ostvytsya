@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/character.dart';
 import '../services/character_store.dart';
+import '../services/crash_log.dart';
 import 'character_edit_screen.dart';
 import 'quest_screen.dart';
 import 'settings_screen.dart';
@@ -15,18 +17,58 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _store = CharacterStore();
+  final _crashLog = CrashLogService();
   List<Character>? _characters;
 
   @override
   void initState() {
     super.initState();
     _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkLastCrash());
   }
 
   Future<void> _load() async {
     await _store.ensureDefaults();
     final list = await _store.listAll();
     if (mounted) setState(() => _characters = list);
+  }
+
+  Future<void> _checkLastCrash() async {
+    final log = await _crashLog.readLastCrash();
+    if (log == null || log.trim().isEmpty || !mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Застосунок нещодавно аварійно завершився'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              log,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: log));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Скопійовано в буфер обміну')),
+              );
+            },
+            child: const Text('Копіювати'),
+          ),
+          TextButton(
+            onPressed: () {
+              _crashLog.clearLastCrash();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Закрити'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _openEdit({Character? character}) async {
