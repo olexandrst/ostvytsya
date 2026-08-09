@@ -1,7 +1,21 @@
+import com.android.build.gradle.BaseExtension
+
 allprojects {
     repositories {
         google()
         mavenCentral()
+    }
+}
+
+// Деякі плагіни (напр. vosk_flutter_service) досі мають захардкоджений
+// застарілий compileSdk у власному build.gradle, нижчий за той, що вимагають
+// їхні ж AndroidX-залежності. Примусово вирівнюємо compileSdk усіх
+// підпроєктів під той самий, що й у app/build.gradle.kts.
+subprojects {
+    afterEvaluate {
+        extensions.findByType(BaseExtension::class.java)?.let { android ->
+            android.compileSdkVersion(37)
+        }
     }
 }
 
