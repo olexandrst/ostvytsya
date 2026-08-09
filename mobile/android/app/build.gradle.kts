@@ -50,3 +50,13 @@ dependencies {
     // NotificationCompat для сповіщення сервісу QuestForegroundService.
     implementation("androidx.core:core-ktx:1.13.1")
 }
+
+// vosk_flutter_service жорстко тягне net.java.dev.jna:jna:5.15.0@aar, а
+// сам vosk-android (com.alphacephei:vosk-android:0.3.75) вимагає
+// jna:5.18.1@aar. Розсинхрон між Java-класами JNA й native libjnidispatch.so
+// з різних версій AAR призводить до краху "Can't obtain peer field ID for
+// class com.sun.jna.Pointer" у Native.initIDs(). Примусово вирівнюємо
+// на одну версію, якої фактично вимагає vosk-android.
+configurations.all {
+    resolutionStrategy.force("net.java.dev.jna:jna:5.18.1@aar")
+}
