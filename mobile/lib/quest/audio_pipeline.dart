@@ -42,6 +42,11 @@ class AudioPipeline {
   bool _playerReady = false;
   final List<(Uint8List, int)> _pendingChunks = [];
 
+  // Чи прийшов хоч один шматок голосу персонажа за поточний квест —
+  // запобіжник від _muted=true "назавжди", якщо хід раптом завершився
+  // взагалі без аудіо (напр. збій транспорту).
+  bool _everFed = false;
+
   bool get isMuted => _muted;
 
   Future<void> open() async {
@@ -92,14 +97,22 @@ class AudioPipeline {
     required void Function(Uint8List pcm16) onMic,
   }) async {
     await open();
-    _muted = false;
+    // Мікрофон СТАРТУЄ заглушеним і апаратно вимкненим: персонаж повинен
+    // договорити своє привітання (перший хід), перш ніж почує дітей.
+    // Раніше мікрофон вмикався одразу, тож живий шум летів у Gemini
+    // одночасно з генерацією привітання й міг спричинити самоперебивання
+    // ще до того, як перший шматок голосу персонажа встигав заглушити
+    // мікрофон через _muteFor() — звідси озвучка була відсутня для самого
+    // першого повідомлення. Мікрофон вмикається природно через
+    // unmute-таймер у _muteFor(), коли черга відтворення дограє.
+    _muted = true;
+    _everFed = false;
     _queuedUntil = 0;
     _playerReady = false;
     _pendingChunks.clear();
     _inputSampleRate = inputSampleRate;
     _onMic = onMic;
 
-    await _queueMicOp(_startRecorderStream);
     await _player.start(outputSampleRate);
 
     _playerReady = true;
@@ -123,6 +136,7 @@ class AudioPipeline {
   }
 
   Future<void> _feedNow(Uint8List pcm16, int sampleRate) async {
+    _everFed = true;
     _muteFor(pcm16.length, sampleRate);
     await _player.write(pcm16);
   }
@@ -150,6 +164,16 @@ class AudioPipeline {
       _muted = false;
       unawaited(_queueMicOp(_startRecorderStream));
     });
+  }
+
+  /// Викликати після завершення ходу персонажа (turnComplete): якщо за
+  /// весь хід не прийшло жодного шматка аудіо (мікрофон і досі заглушений
+  /// самим стартовим станом), примусово розблокувати — інакше розмова
+  /// застрягне в тиші назавжди.
+  void unmuteIfNoAudioYet() {
+    if (!_everFed && _muted) {
+      unmuteNow();
+    }
   }
 
   /// Зачекати, поки черга відтворення голосу персонажа спорожніє (щоб не

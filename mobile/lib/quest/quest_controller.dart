@@ -189,6 +189,7 @@ class QuestController {
           }
           userBuf = '';
           modelBuf = '';
+          audio.unmuteIfNoAudioYet();
           if (won) {
             audio.waitDrained().then((_) => finish(QuestOutcome.won));
           }

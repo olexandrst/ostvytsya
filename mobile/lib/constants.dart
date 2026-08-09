@@ -113,8 +113,9 @@ const double kMaxDurationS = 1800.0;
 /// Пауза перед автоматичним перезапуском того самого квесту.
 const double kRestartCooldownS = 2.0;
 
-/// Українська "nano"-модель Vosk для локальної (офлайн) активації кодовим
-/// словом. Спільна константа для WakeGateService і завантаження на
-/// головному екрані — щоб обидва місця точно дивились на той самий файл.
+/// Українська "small"-модель Vosk (133 МБ) для локальної (офлайн) активації
+/// кодовим словом — точніша за "nano" (73 МБ), яка занадто часто помилялась
+/// при розпізнаванні. Спільна константа для WakeGateService і завантаження
+/// на головному екрані — щоб обидва місця точно дивились на той самий файл.
 const String kVoskModelUrl =
-    'https://alphacephei.com/vosk/models/vosk-model-small-uk-v3-nano.zip';
+    'https://alphacephei.com/vosk/models/vosk-model-small-uk-v3-small.zip';
