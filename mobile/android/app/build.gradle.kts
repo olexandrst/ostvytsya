@@ -58,5 +58,7 @@ dependencies {
 // class com.sun.jna.Pointer" у Native.initIDs(). Примусово вирівнюємо
 // на одну версію, якої фактично вимагає vosk-android.
 configurations.all {
-    resolutionStrategy.force("net.java.dev.jna:jna:5.18.1@aar")
+    // Без "@aar" — force() очікує лише group:name:version, тип артефакту
+    // (aar) і так береться з того, як jna запитує кожен споживач.
+    resolutionStrategy.force("net.java.dev.jna:jna:5.18.1")
 }
