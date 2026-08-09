@@ -29,6 +29,9 @@ class GeminiTransport implements QuestTransport {
   final _audioController = StreamController<Uint8List>.broadcast();
   StreamSubscription? _sub;
   bool _setupComplete = false;
+  bool _receivedAnyAudio = false;
+  bool _sentRecoveryCue = false;
+  Timer? _recoveryTimer;
 
   GeminiTransport(this.character, this.apiKey);
 
@@ -107,6 +110,7 @@ class GeminiTransport implements QuestTransport {
       _send({
         'realtime_input': {'text': kGreetingTrigger},
       });
+      _scheduleRecoveryCueIfSilent();
       return;
     }
     _send({
@@ -121,6 +125,28 @@ class GeminiTransport implements QuestTransport {
         ],
         'turnComplete': true,
       },
+    });
+  }
+
+  /// Відомий, визнаний самим Google баг якості gemini-3.1-flash-live-preview
+  /// (google-gemini/cookbook issue #1197): перший хід інколи взагалі не
+  /// озвучується (холодний старт/самоперебивання). Спільнота повідомляє про
+  /// робочий обхід — надіслати ще один короткий сигнал через
+  /// realtime_input.text, якщо за пару секунд аудіо так і не з'явилось.
+  /// Лише ОДНА спроба відновлення за весь квест.
+  void _scheduleRecoveryCueIfSilent() {
+    _recoveryTimer?.cancel();
+    _recoveryTimer = Timer(const Duration(milliseconds: 2500), () {
+      if (_sentRecoveryCue || _receivedAnyAudio || _channel == null) return;
+      _sentRecoveryCue = true;
+      _send({
+        'realtime_input': {
+          'text':
+              '[Службовий сигнал — не читай його вголос і не пиши новий '
+              'текст. Просто озвуч вголос СВОЄЮ реплікою те, що ти щойно '
+              'сказав — гравець тебе поки що не почув.]',
+        },
+      });
     });
   }
 
@@ -163,6 +189,7 @@ class GeminiTransport implements QuestTransport {
             if (inline is Map) {
               final data = inline['data'];
               if (data is String && data.isNotEmpty) {
+                _receivedAnyAudio = true;
                 _audioController.add(base64Decode(data));
               }
             }
@@ -223,6 +250,7 @@ class GeminiTransport implements QuestTransport {
 
   @override
   Future<void> close() async {
+    _recoveryTimer?.cancel();
     await _sub?.cancel();
     await _channel?.sink.close();
     await _eventsController.close();
