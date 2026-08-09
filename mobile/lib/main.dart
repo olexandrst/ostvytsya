@@ -1,9 +1,34 @@
+import 'dart:async';
+import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
 
 void main() {
-  runApp(const OstvytsyaApp());
+  // Ловимо будь-які необроблені помилки Dart і пишемо їх у системний лог
+  // (видно через `adb logcat`), замість того щоб дати застосунку тихо
+  // впасти без жодного сліду.
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    developer.log(
+      'Необроблена помилка Flutter',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
+  };
+  runZonedGuarded(
+    () {
+      runApp(const OstvytsyaApp());
+    },
+    (error, stack) {
+      developer.log(
+        'Необроблена помилка Dart',
+        error: error,
+        stackTrace: stack,
+      );
+    },
+  );
 }
 
 class OstvytsyaApp extends StatelessWidget {

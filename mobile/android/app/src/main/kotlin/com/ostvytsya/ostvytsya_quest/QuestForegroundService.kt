@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 /**
@@ -32,8 +33,16 @@ class QuestForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForegroundWithNotification()
-        acquireWakeLock()
+        try {
+            startForegroundWithNotification()
+            acquireWakeLock()
+        } catch (t: Throwable) {
+            // Не даємо збою тут звалити весь процес (той самий процес, що й
+            // Flutter-двигун) — квест лишиться без сповіщення/wake lock, але
+            // застосунок не впаде.
+            Log.e(TAG, "Не вдалося підняти foreground-сервіс", t)
+            stopSelf()
+        }
         return START_STICKY
     }
 
@@ -102,6 +111,7 @@ class QuestForegroundService : Service() {
     }
 
     companion object {
+        private const val TAG = "QuestForegroundService"
         private const val NOTIFICATION_ID = 4271
     }
 }

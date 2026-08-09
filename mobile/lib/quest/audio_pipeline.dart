@@ -54,7 +54,6 @@ class AudioPipeline {
       sampleRate: inputSampleRate,
       numChannels: 1,
       audioSource: AudioSource.microphone,
-      enableEchoCancellation: true,
     );
 
     await _player.startPlayerFromStream(
