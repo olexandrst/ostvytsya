@@ -15,6 +15,7 @@ class Character {
   double speechSpeed;
   String systemPrompt;
   String winWord;
+  List<String> wakeWords;
 
   Character({
     required this.id,
@@ -25,10 +26,12 @@ class Character {
     this.speechSpeed = kDefaultSpeechSpeed,
     this.systemPrompt = '',
     this.winWord = kDefaultWinWord,
-  });
+    List<String>? wakeWords,
+  }) : wakeWords = wakeWords ?? const [];
 
   factory Character.fromJson(Map<String, dynamic> json) {
     final provider = (json['provider'] as String?) ?? 'openai';
+    final wakeWordsRaw = json['wake_words'];
     return Character(
       id: json['id'] as String,
       displayName: (json['display_name'] as String?) ?? '',
@@ -39,6 +42,12 @@ class Character {
           (json['speech_speed'] as num?)?.toDouble() ?? kDefaultSpeechSpeed,
       systemPrompt: (json['system_prompt'] as String?) ?? '',
       winWord: (json['win_word'] as String?) ?? kDefaultWinWord,
+      wakeWords: wakeWordsRaw is List
+          ? wakeWordsRaw
+                .map((e) => e.toString())
+                .where((e) => e.trim().isNotEmpty)
+                .toList()
+          : const [],
     );
   }
 
@@ -51,6 +60,7 @@ class Character {
     'speech_speed': speechSpeed,
     'system_prompt': systemPrompt,
     'win_word': winWord,
+    'wake_words': wakeWords,
   };
 
   Character copyWith({
@@ -62,6 +72,7 @@ class Character {
     double? speechSpeed,
     String? systemPrompt,
     String? winWord,
+    List<String>? wakeWords,
   }) {
     return Character(
       id: id ?? this.id,
@@ -72,6 +83,7 @@ class Character {
       speechSpeed: speechSpeed ?? this.speechSpeed,
       systemPrompt: systemPrompt ?? this.systemPrompt,
       winWord: winWord ?? this.winWord,
+      wakeWords: wakeWords ?? List<String>.from(this.wakeWords),
     );
   }
 
@@ -81,4 +93,10 @@ class Character {
   /// з вільним system_prompt).
   String get renderedSystemInstruction =>
       '$kLanguageRules\n$kPerformanceRules\n${systemPrompt.trim()}';
+
+  /// Кодове слово(а) активації — якщо персонаж ще не має жодного, підстава
+  /// розумний типовий варіант (так само, як web/character_forms.py).
+  List<String> get effectiveWakeWords => wakeWords.isNotEmpty
+      ? wakeWords
+      : [displayName.isNotEmpty ? displayName : 'Оствиця'];
 }

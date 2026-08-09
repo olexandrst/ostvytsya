@@ -5,8 +5,9 @@ import '../models/character.dart';
 import 'audio_pipeline.dart';
 import 'transcript_utils.dart';
 import 'transport.dart';
+import 'wake_gate.dart';
 
-enum QuestPhase { connecting, running, restarting, stopped }
+enum QuestPhase { listening, connecting, running, restarting, stopped }
 
 enum QuestOutcome { won, timeout, error, aborted }
 
@@ -25,10 +26,12 @@ class TranscriptLine {
   const TranscriptLine(this.who, this.text);
 }
 
-/// Веде один персонаж від початку до кінця квесту й одразу перезапускає
-/// той самий квест по колу — доки користувач сам не зупинить. Порт логіки
-/// domovyk_quest/session.py (таємне слово, тиша, ліміт тривалості), лише
-/// транспорт (Gemini/OpenAI) підмінний через [transportFactory].
+/// Веде один персонаж по колу «сплю → чую кодове слово → квест →
+/// перемога/тайм-аут → знову сплю» — доки користувач сам не зупинить. Порт
+/// логіки domovyk_quest/orchestrator.py + session.py: спершу локально (без
+/// мережі й без сесії Gemini/OpenAI) слухаємо кодове слово через
+/// [WakeGateService], і лише почувши його — під'єднуємось і ведемо один
+/// квест. Транспорт (Gemini/OpenAI) підмінний через [transportFactory].
 class QuestController {
   QuestController({
     required this.character,
@@ -40,6 +43,7 @@ class QuestController {
   final String apiKey;
   final QuestTransportFactory transportFactory;
   final AudioPipeline audio = AudioPipeline();
+  final WakeGateService wakeGate = WakeGateService();
 
   final _statusCtrl = StreamController<QuestStatusUpdate>.broadcast();
   final _transcriptCtrl = StreamController<TranscriptLine>.broadcast();
@@ -54,8 +58,9 @@ class QuestController {
 
   bool get isRunning => _running;
 
-  /// Запустити нескінченний цикл «квест → перемога/тайм-аут → пауза →
-  /// знову квест». Повертається лише після виклику [stop].
+  /// Запустити нескінченний цикл «сплю (чекаю кодове слово) → квест →
+  /// перемога/тайм-аут → пауза → знову сплю». Повертається лише після
+  /// виклику [stop].
   Future<void> run() async {
     if (_running) return;
     _running = true;
@@ -63,6 +68,31 @@ class QuestController {
     await audio.open();
 
     while (!_stopRequested) {
+      _statusCtrl.add(
+        QuestStatusUpdate(QuestPhase.listening, runCount: _runCount),
+      );
+      bool woke;
+      try {
+        woke = await wakeGate.waitForWake(
+          wakeWords: character.effectiveWakeWords,
+          isStopRequested: () => _stopRequested,
+        );
+      } catch (e) {
+        _transcriptCtrl.add(
+          TranscriptLine('system', 'Розпізнавання кодового слова: $e'),
+        );
+        woke = false;
+        if (!_stopRequested) {
+          await Future<void>.delayed(
+            Duration(milliseconds: (kRestartCooldownS * 1000).round()),
+          );
+        }
+      }
+      if (_stopRequested || !woke) {
+        if (_stopRequested) break;
+        continue; // помилка розпізнавання — спробувати слухати ще раз
+      }
+
       _runCount++;
       _statusCtrl.add(
         QuestStatusUpdate(QuestPhase.connecting, runCount: _runCount),
@@ -82,6 +112,7 @@ class QuestController {
     }
 
     await audio.dispose();
+    await wakeGate.dispose();
     _statusCtrl.add(QuestStatusUpdate(QuestPhase.stopped, runCount: _runCount));
     _running = false;
   }

@@ -27,7 +27,7 @@ class _QuestScreenState extends State<QuestScreen> {
   final _scrollCtrl = ScrollController();
 
   QuestController? _controller;
-  QuestStatusUpdate _status = const QuestStatusUpdate(QuestPhase.connecting);
+  QuestStatusUpdate _status = const QuestStatusUpdate(QuestPhase.listening);
   String? _fatalError;
   bool _stopping = false;
 
@@ -135,6 +135,9 @@ class _QuestScreenState extends State<QuestScreen> {
 
   String _phaseLabel(QuestPhase phase) {
     switch (phase) {
+      case QuestPhase.listening:
+        final words = widget.character.effectiveWakeWords.join(', ');
+        return '💤 Слухаю кодове слово: «$words»';
       case QuestPhase.connecting:
         return "🔌 З'єднання...";
       case QuestPhase.running:
@@ -195,8 +198,13 @@ class _QuestScreenState extends State<QuestScreen> {
                 ),
                 Expanded(
                   child: _transcript.isEmpty
-                      ? const Center(
-                          child: Text('Персонаж зараз заговорить...'),
+                      ? Center(
+                          child: Text(
+                            _status.phase == QuestPhase.listening
+                                ? 'Промов кодове слово вголос, щоб розбудити персонажа...'
+                                : 'Персонаж зараз заговорить...',
+                            textAlign: TextAlign.center,
+                          ),
                         )
                       : ListView.builder(
                           controller: _scrollCtrl,

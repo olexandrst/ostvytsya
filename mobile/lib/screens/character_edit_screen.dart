@@ -23,6 +23,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _promptCtrl;
   late final TextEditingController _winWordCtrl;
+  late final TextEditingController _wakeWordsCtrl;
   late String _provider;
   late String _openaiVoice;
   late String _geminiVoice;
@@ -38,6 +39,9 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
     _nameCtrl = TextEditingController(text: c?.displayName ?? '');
     _promptCtrl = TextEditingController(text: c?.systemPrompt ?? '');
     _winWordCtrl = TextEditingController(text: c?.winWord ?? kDefaultWinWord);
+    _wakeWordsCtrl = TextEditingController(
+      text: (c?.wakeWords ?? const []).join(', '),
+    );
     _provider = c?.provider ?? 'google';
     _openaiVoice = (c?.openaiVoice.isNotEmpty ?? false)
         ? c!.openaiVoice
@@ -53,6 +57,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
     _nameCtrl.dispose();
     _promptCtrl.dispose();
     _winWordCtrl.dispose();
+    _wakeWordsCtrl.dispose();
     super.dispose();
   }
 
@@ -63,6 +68,11 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
       final id =
           widget.character?.id ??
           await widget.store.uniqueIdFromName(_nameCtrl.text);
+      final wakeWords = _wakeWordsCtrl.text
+          .split(',')
+          .map((w) => w.trim())
+          .where((w) => w.isNotEmpty)
+          .toList();
       final character = Character(
         id: id,
         displayName: _nameCtrl.text.trim(),
@@ -74,6 +84,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
         winWord: _winWordCtrl.text.trim().isEmpty
             ? kDefaultWinWord
             : _winWordCtrl.text.trim(),
+        wakeWords: wakeWords,
       );
       await widget.store.save(character);
       if (mounted) Navigator.pop(context, true);
@@ -165,6 +176,18 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
                 onChanged: (v) => setState(() => _speechSpeed = v),
               ),
             ],
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _wakeWordsCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Кодове слово(а) активації',
+                helperText:
+                    'Через кому. Персонаж мовчки слухає, поки не почує одне '
+                    'з них — лише тоді стартує квест. Якщо порожньо — '
+                    'використається назва персонажа.',
+                helperMaxLines: 3,
+              ),
+            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _winWordCtrl,

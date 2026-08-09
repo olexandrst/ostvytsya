@@ -180,8 +180,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     title: Text(c.displayName),
                     subtitle: Text(
-                      '$providerLabel · голос $voiceLabel · слово «${c.winWord}»',
+                      '$providerLabel · голос $voiceLabel\n'
+                      'кодове «${c.effectiveWakeWords.join(', ')}» · перемога «${c.winWord}»',
                     ),
+                    isThreeLine: true,
                     trailing: PopupMenuButton<String>(
                       onSelected: (v) {
                         switch (v) {

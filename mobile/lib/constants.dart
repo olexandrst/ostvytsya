@@ -56,7 +56,11 @@ const double kDefaultSpeechSpeed = 1.0;
 const String kDefaultWinWord = 'Перемога';
 
 const String kOpenAiRealtimeModel = 'gpt-realtime-2.1-mini';
-const String kGeminiLiveModel = 'gemini-2.5-flash-native-audio-preview-09-2025';
+// Gemini 3.1 Flash Live (preview) — наступник gemini-2.5-flash-native-audio.
+// Той самий протокол BidiGenerateContent (v1beta) і та сама палітра з 30
+// голосів (Charon/Kore/Orus/Puck/Enceladus тощо лишаються чинними) — заміна
+// лише самої моделі.
+const String kGeminiLiveModel = 'gemini-3.1-flash-live-preview';
 
 /// Мовний блок — вимога говорити ВИКЛЮЧНО українською, без іноземного
 /// акценту. Стосується всіх персонажів, додається до системного промпту
