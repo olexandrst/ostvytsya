@@ -63,6 +63,9 @@ class QuestController {
   bool _running = false;
   int _runCount = 0;
   QuestTransport? _transport;
+  // Дозволяє stop() завершити активний хід миттєво, а не чекати до 1с
+  // наступного тіку сторожового таймера в _runOnce().
+  void Function()? _abortCurrentRun;
 
   bool get isRunning => _running;
 
@@ -127,6 +130,7 @@ class QuestController {
 
   Future<void> stop() async {
     _stopRequested = true;
+    _abortCurrentRun?.call();
     try {
       await _transport?.close();
     } catch (_) {}
@@ -149,6 +153,8 @@ class QuestController {
         completer.complete(outcome);
       }
     }
+
+    _abortCurrentRun = () => finish(QuestOutcome.aborted);
 
     var loggedFirstAudioChunk = false;
 
@@ -265,6 +271,7 @@ class QuestController {
     }
 
     final outcome = await completer.future;
+    _abortCurrentRun = null;
 
     watchdog.cancel();
     await eventsSub.cancel();

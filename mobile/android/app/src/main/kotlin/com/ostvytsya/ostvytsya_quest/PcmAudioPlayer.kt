@@ -79,6 +79,13 @@ class PcmAudioPlayer {
     fun stop() {
         val h = handler ?: return
         val t = thread
+        // Скидаємо ВСІ ще не виконані write() — інакше quitSafely() чекає,
+        // поки серіалізована черга дограє геть усю накопичену репліку
+        // персонажа (могло бути кілька секунд), і кнопка "Зупинити" реагує
+        // з відчутною затримкою. Лишається щонайбільше один write(), що вже
+        // виконується прямо зараз (і сам скоро розблокується, бо звільнення
+        // буфера AudioTrack — питання мілісекунд, а не секунд).
+        h.removeCallbacksAndMessages(null)
         h.post { releaseTrack() }
         t?.quitSafely()
         thread = null
