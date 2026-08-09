@@ -27,6 +27,7 @@ import java.util.Locale
 class MainActivity : FlutterActivity() {
     private val channelName = "com.ostvytsya.ostvytsya_quest/foreground"
     private val TAG = "MainActivity"
+    private val pcmPlayer = PcmAudioPlayer()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -69,6 +70,20 @@ class MainActivity : FlutterActivity() {
                     }
                     "acknowledgeExitReason" -> {
                         acknowledgeExitReason()
+                        result.success(null)
+                    }
+                    "pcmPlayerStart" -> {
+                        val sampleRate = (call.argument<Int>("sampleRate")) ?: 24000
+                        pcmPlayer.start(sampleRate)
+                        result.success(null)
+                    }
+                    "pcmPlayerWrite" -> {
+                        val bytes = call.argument<ByteArray>("bytes")
+                        if (bytes != null) pcmPlayer.write(bytes)
+                        result.success(null)
+                    }
+                    "pcmPlayerStop" -> {
+                        pcmPlayer.stop()
                         result.success(null)
                     }
                     else -> result.notImplemented()

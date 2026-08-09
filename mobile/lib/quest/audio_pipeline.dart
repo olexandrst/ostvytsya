@@ -1,28 +1,26 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter_sound/flutter_sound.dart'
-    show Codec, FlutterSoundPlayer;
 import 'package:record/record.dart';
 
-/// Мікрофон і відтворення голосу персонажа — навмисно ДВІ РІЗНІ бібліотеки:
-/// `record` для захоплення, `flutter_sound` лише для відтворення. Раніше
-/// обидва напрямки йшли через flutter_sound — окреме розділення пакетів
-/// саме по собі не прибрало нативний SIGSEGV у AudioTrack (підтверджено
-/// повторним крахом із тим самим сигнатуром навіть після розділення), тож
-/// причина глибша за flutter_sound: цей конкретний пристрій (Samsung
-/// Galaxy A35, Android 16) не витримує, коли AudioRecord (мікрофон) і
-/// AudioTrack (колонка) апаратно активні ОДНОЧАСНО, незалежно від того,
-/// який плагін ними керує.
+import 'native_pcm_player.dart';
+
+/// Мікрофон і відтворення голосу персонажа — навмисно ДВІ РІЗНІ реалізації:
+/// `record` для захоплення мікрофону, власний нативний AudioTrack-плеєр
+/// (NativePcmPlayer / PcmAudioPlayer.kt) для відтворення. Раніше обидва
+/// напрямки йшли через flutter_sound, чий плеєр спричинив ТРИ підтверджені
+/// нативні SIGSEGV на реальному пристрої (AudioTrack.write() ->
+/// AudioTrack::releaseBuffer(), null pointer dereference) — навіть після
+/// того, як мікрофон перестав працювати одночасно з відтворенням. Причина
+/// була в самому плеєрі flutter_sound, тож його прибрано повністю.
 ///
-/// Тому мікрофон тепер апаратно ЗУПИНЯЄТЬСЯ на час, поки персонаж говорить
-/// (а не просто ігнорується на Dart-рівні, як було раніше), і стартує знову
-/// щойно черга відтворення спорожніє — AudioRecord і AudioTrack ніколи не
-/// працюють одночасно. Старт/стоп мікрофона серіалізовано через _micOpChain,
-/// щоб не накладати виклики один на одного.
+/// Половинний дуплекс: поки персонаж говорить, мікрофон апаратно вимкнено
+/// (не просто ігнорується на Dart-рівні) — так само, як
+/// web/static/quest-gemini.js::markSpeaking() робить це в браузері (мутимо,
+/// поки не «дограє» черга відтворення).
 class AudioPipeline {
   final AudioRecorder _recorder = AudioRecorder();
-  final FlutterSoundPlayer _player = FlutterSoundPlayer();
+  final NativePcmPlayer _player = NativePcmPlayer();
 
   StreamSubscription<Uint8List>? _micSub;
   bool _opened = false;
@@ -37,9 +35,10 @@ class AudioPipeline {
   void Function(Uint8List pcm16)? _onMic;
 
   // Плеєр стартує асинхронно (нативний виклик), а перший шматок голосу
-  // персонажа може прийти від транспорту раніше, ніж startPlayerFromStream
-  // встигне завершитися — годування ще не готового плеєра валило нативний
-  // код. Тож до готовності буферизуємо шматки й віддаємо їх по черзі.
+  // персонажа може прийти від транспорту раніше, ніж він встигне
+  // ініціалізуватися. Тож до готовності буферизуємо шматки й віддаємо їх
+  // по черзі (нативний бік і сам безпечно ігнорує write() до готовності,
+  // це — додатковий захист про всяк випадок).
   bool _playerReady = false;
   final List<(Uint8List, int)> _pendingChunks = [];
 
@@ -47,7 +46,6 @@ class AudioPipeline {
 
   Future<void> open() async {
     if (_opened) return;
-    await _player.openPlayer();
     _stopwatch.start();
     _opened = true;
   }
@@ -102,14 +100,7 @@ class AudioPipeline {
     _onMic = onMic;
 
     await _queueMicOp(_startRecorderStream);
-
-    await _player.startPlayerFromStream(
-      codec: Codec.pcm16,
-      interleaved: true,
-      numChannels: 1,
-      sampleRate: outputSampleRate,
-      bufferSize: 4096,
-    );
+    await _player.start(outputSampleRate);
 
     _playerReady = true;
     final pending = List<(Uint8List, int)>.from(_pendingChunks);
@@ -133,11 +124,7 @@ class AudioPipeline {
 
   Future<void> _feedNow(Uint8List pcm16, int sampleRate) async {
     _muteFor(pcm16.length, sampleRate);
-    try {
-      await _player.feedUint8FromStream(pcm16);
-    } catch (_) {
-      // Плеєр міг уже зупинитися (квест завершується) — це не помилка.
-    }
+    await _player.write(pcm16);
   }
 
   void _muteFor(int byteLength, int sampleRate) {
@@ -191,18 +178,13 @@ class AudioPipeline {
     _pendingChunks.clear();
     _onMic = null;
     await _queueMicOp(_stopRecorderStream);
-    try {
-      await _player.stopPlayer();
-    } catch (_) {}
+    await _player.stop();
     _muted = false;
   }
 
   Future<void> dispose() async {
     await stop();
-    if (_opened) {
-      await _player.closePlayer();
-      _opened = false;
-    }
+    _opened = false;
     try {
       await _recorder.dispose();
     } catch (_) {}
