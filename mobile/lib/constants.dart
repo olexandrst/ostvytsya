@@ -99,9 +99,12 @@ const String kGreetingTrigger =
     'діти заговорять, не питай дозволу і не вигадуй власних завдань — веди '
     'рівно той квест, що описаний у твоїх інструкціях.]';
 
-/// Таймаути квесту — портовано з domovyk_quest/config.py::SessionConfig.
-const double kInactivityTimeoutS = 45.0;
-const double kMaxDurationS = 300.0;
+/// Таймаути квесту: якщо гравець мовчить (не відповідає) 30 хвилин —
+/// квест завершується (і, як завжди, автоматично перезапускається).
+/// Той самий ліміт — і на загальну тривалість спроби, щоб живу розмову
+/// не обривало передчасно.
+const double kInactivityTimeoutS = 1800.0;
+const double kMaxDurationS = 1800.0;
 
 /// Пауза перед автоматичним перезапуском того самого квесту.
 const double kRestartCooldownS = 2.0;
