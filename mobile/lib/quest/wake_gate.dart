@@ -24,9 +24,22 @@ class WakeGateService {
   static const sampleRate = 16000;
   static const _fuzzyThreshold = 0.70;
 
+  /// Скільки послідовних помилок розпізнавання поспіль допустимо, перш ніж
+  /// вважати мікрофон/розпізнавач непрацездатним і повідомити про помилку,
+  /// а не мовчки "слухати" вічно без жодного результату.
+  static const _maxConsecutiveErrors = 50;
+
   final AudioRecorder _recorder = AudioRecorder();
   Recognizer? _recognizer;
   Future<void>? _readyFuture;
+
+  final _diagCtrl = StreamController<String>.broadcast();
+
+  /// Людяні діагностичні повідомлення: стан завантаження моделі, що саме
+  /// почув мікрофон (частковий текст), помилки розпізнавання. Призначено
+  /// для показу в транскрипті квесту, щоб було видно, що насправді
+  /// відбувається, поки персонаж "спить".
+  Stream<String> get diagnostics => _diagCtrl.stream;
 
   /// Завантажити модель і створити розпізнавач (один раз за весь час
   /// роботи застосунку — повторні виклики просто чекають той самий Future).
@@ -35,13 +48,20 @@ class WakeGateService {
   }
 
   Future<void> _load() async {
-    final vosk = VoskFlutterPlugin.instance();
-    final modelPath = await ModelLoader().loadFromNetwork(_modelUrl);
-    final model = await vosk.createModel(modelPath);
-    _recognizer = await vosk.createRecognizer(
-      model: model,
-      sampleRate: sampleRate,
-    );
+    _diagCtrl.add('Завантажую модель Vosk (один раз, потім кешується)...');
+    try {
+      final vosk = VoskFlutterPlugin.instance();
+      final modelPath = await ModelLoader().loadFromNetwork(_modelUrl);
+      final model = await vosk.createModel(modelPath);
+      _recognizer = await vosk.createRecognizer(
+        model: model,
+        sampleRate: sampleRate,
+      );
+      _diagCtrl.add('Модель Vosk готова, слухаю мікрофон.');
+    } catch (e) {
+      _diagCtrl.add('Не вдалося завантажити модель Vosk: $e');
+      rethrow;
+    }
   }
 
   /// Слухати мікрофон локально, доки не почується одне з [wakeWords], або
@@ -72,6 +92,9 @@ class WakeGateService {
       if (isStopRequested()) finish(false);
     });
 
+    var consecutiveErrors = 0;
+    var lastPartial = '';
+
     final sub = stream.listen((chunk) async {
       if (completer.isCompleted) return;
       try {
@@ -80,22 +103,39 @@ class WakeGateService {
             ? await recognizer.getResult()
             : await recognizer.getPartialResult();
         final text = _extractText(raw, ready);
+        consecutiveErrors = 0;
+        if (text.isNotEmpty && text != lastPartial) {
+          lastPartial = text;
+          _diagCtrl.add('Чую: «$text»');
+        }
         if (text.isNotEmpty &&
             matchesWakeWord(text, wakeWords, threshold: _fuzzyThreshold)) {
           finish(true);
         }
-      } catch (_) {
-        // Один пропущений шматок розпізнавання не критичний — слухаємо далі.
+      } catch (e) {
+        consecutiveErrors++;
+        if (consecutiveErrors == 1 || consecutiveErrors % 20 == 0) {
+          _diagCtrl.add('Помилка розпізнавання (×$consecutiveErrors): $e');
+        }
+        if (consecutiveErrors >= _maxConsecutiveErrors &&
+            !completer.isCompleted) {
+          completer.completeError(
+            Exception('Розпізнавання постійно падає: $e'),
+          );
+        }
       }
     });
 
-    final result = await completer.future;
-    stopTimer.cancel();
-    await sub.cancel();
     try {
-      await _recorder.stop();
-    } catch (_) {}
-    return result;
+      final result = await completer.future;
+      return result;
+    } finally {
+      stopTimer.cancel();
+      await sub.cancel();
+      try {
+        await _recorder.stop();
+      } catch (_) {}
+    }
   }
 
   String _extractText(String rawJson, bool isFinal) {
@@ -115,5 +155,6 @@ class WakeGateService {
     try {
       await _recognizer?.dispose();
     } catch (_) {}
+    await _diagCtrl.close();
   }
 }

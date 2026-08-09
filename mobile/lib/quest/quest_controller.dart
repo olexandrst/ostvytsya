@@ -37,7 +37,15 @@ class QuestController {
     required this.character,
     required this.apiKey,
     required this.transportFactory,
-  });
+  }) {
+    // Показуємо, що саме чує локальний Vosk, поки персонаж "спить" — без
+    // цього мовчазна відсутність активації виглядає однаково і при
+    // непрацюючому мікрофоні/розпізнаванні, і при тому, що просто ще ніхто
+    // не сказав кодове слово.
+    wakeGate.diagnostics.listen((msg) {
+      _transcriptCtrl.add(TranscriptLine('system', msg));
+    });
+  }
 
   final Character character;
   final String apiKey;
