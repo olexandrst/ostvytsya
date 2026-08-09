@@ -150,11 +150,16 @@ class QuestController {
       }
     }
 
+    var loggedFirstAudioChunk = false;
+
     final eventsSub = transport.events.listen((evt) {
       switch (evt.kind) {
         case QuestEventKind.ready:
           _statusCtrl.add(
             QuestStatusUpdate(QuestPhase.running, runCount: _runCount),
+          );
+          _transcriptCtrl.add(
+            const TranscriptLine('system', 'Плеєр голосу: ініціалізація...'),
           );
           audio
               .start(
@@ -162,6 +167,11 @@ class QuestController {
                 outputSampleRate: transport.outputSampleRate,
                 onMic: transport.sendAudio,
               )
+              .then((_) {
+                _transcriptCtrl.add(
+                  const TranscriptLine('system', 'Плеєр голосу: готовий.'),
+                );
+              })
               .catchError((Object e) {
                 _transcriptCtrl.add(TranscriptLine('system', 'Мікрофон: $e'));
                 finish(QuestOutcome.error);
@@ -181,6 +191,14 @@ class QuestController {
           }
           break;
         case QuestEventKind.turnComplete:
+          if (!loggedFirstAudioChunk) {
+            _transcriptCtrl.add(
+              const TranscriptLine(
+                'system',
+                'Хід завершився без жодного шматка аудіо від Gemini.',
+              ),
+            );
+          }
           if (userBuf.trim().isNotEmpty) {
             _transcriptCtrl.add(TranscriptLine('user', userBuf.trim()));
           }
@@ -208,6 +226,15 @@ class QuestController {
 
     final audioSub = transport.outputAudio.listen((chunk) {
       lastVoice = DateTime.now();
+      if (!loggedFirstAudioChunk) {
+        loggedFirstAudioChunk = true;
+        _transcriptCtrl.add(
+          TranscriptLine(
+            'system',
+            'Отримано перший шматок голосу персонажа (${chunk.length} байт).',
+          ),
+        );
+      }
       unawaited(audio.playAgentChunk(chunk, transport.outputSampleRate));
     });
 
