@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:vosk_flutter_service/vosk_flutter_service.dart';
 
+import '../constants.dart';
 import '../models/character.dart';
 import '../services/character_store.dart';
 import '../services/crash_log.dart';
@@ -20,10 +22,15 @@ class _HomeScreenState extends State<HomeScreen> {
   final _crashLog = CrashLogService();
   List<Character>? _characters;
 
+  bool _voskReady = false;
+  String? _voskError;
+  String _voskStatus = 'Перевіряю голосову модель Vosk...';
+
   @override
   void initState() {
     super.initState();
     _load();
+    _preloadVoskModel();
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkLastCrash());
   }
 
@@ -31,6 +38,30 @@ class _HomeScreenState extends State<HomeScreen> {
     await _store.ensureDefaults();
     final list = await _store.listAll();
     if (mounted) setState(() => _characters = list);
+  }
+
+  /// Завантажити (або підхопити з кешу) модель Vosk ще ДО того, як
+  /// відкриється будь-який квест — щоб не було мовчазного зависання на
+  /// екрані квесту, поки модель вперше качається з мережі. Доки це не
+  /// завершиться, список персонажів і старт квесту заблоковані.
+  Future<void> _preloadVoskModel() async {
+    try {
+      final modelName = kVoskModelUrl.split('/').last.replaceAll('.zip', '');
+      final alreadyLoaded = await ModelLoader().isModelAlreadyLoaded(modelName);
+      if (!alreadyLoaded && mounted) {
+        setState(
+          () => _voskStatus =
+              'Завантажую голосову модель Vosk (лише один раз, потім '
+              'кешується на пристрої)...',
+        );
+      }
+      await ModelLoader().loadFromNetwork(kVoskModelUrl);
+      if (mounted) setState(() => _voskReady = true);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _voskError = 'Не вдалося завантажити модель Vosk: $e');
+      }
+    }
   }
 
   Future<void> _checkLastCrash() async {
@@ -135,6 +166,48 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildVoskGate() {
+    if (_voskError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 48, color: Colors.red),
+              const SizedBox(height: 16),
+              Text(_voskError!, textAlign: TextAlign.center),
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: () {
+                  setState(() {
+                    _voskError = null;
+                    _voskStatus = 'Перевіряю голосову модель Vosk...';
+                  });
+                  _preloadVoskModel();
+                },
+                child: const Text('Спробувати ще раз'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 24),
+            Text(_voskStatus, textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final characters = _characters;
@@ -152,7 +225,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: characters == null
+      body: !_voskReady
+          ? _buildVoskGate()
+          : characters == null
           ? const Center(child: CircularProgressIndicator())
           : characters.isEmpty
           ? const Center(child: Text('Персонажів ще немає — натисни «+»'))
@@ -209,11 +284,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
-      floatingActionButton: FloatingActionButton(
-        tooltip: 'Новий персонаж',
-        onPressed: () => _openEdit(),
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: !_voskReady
+          ? null
+          : FloatingActionButton(
+              tooltip: 'Новий персонаж',
+              onPressed: () => _openEdit(),
+              child: const Icon(Icons.add),
+            ),
     );
   }
 }

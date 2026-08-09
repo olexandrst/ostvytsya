@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:record/record.dart';
 import 'package:vosk_flutter_service/vosk_flutter_service.dart';
 
+import '../constants.dart';
 import 'wake_matcher.dart';
 
 /// Локальне (офлайн, без мережі) очікування кодового слова персонажа —
@@ -19,8 +20,6 @@ import 'wake_matcher.dart';
 /// одночасно: [waitForWake] завжди повністю зупиняє свій запис перед тим,
 /// як повернути результат.
 class WakeGateService {
-  static const _modelUrl =
-      'https://alphacephei.com/vosk/models/vosk-model-small-uk-v3-nano.zip';
   static const sampleRate = 16000;
   static const _fuzzyThreshold = 0.70;
 
@@ -51,7 +50,7 @@ class WakeGateService {
     _diagCtrl.add('Завантажую модель Vosk (один раз, потім кешується)...');
     try {
       final vosk = VoskFlutterPlugin.instance();
-      final modelPath = await ModelLoader().loadFromNetwork(_modelUrl);
+      final modelPath = await ModelLoader().loadFromNetwork(kVoskModelUrl);
       final model = await vosk.createModel(modelPath);
       _recognizer = await vosk.createRecognizer(
         model: model,
