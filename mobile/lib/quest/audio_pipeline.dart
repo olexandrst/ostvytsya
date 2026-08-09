@@ -1,18 +1,26 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter_sound/flutter_sound.dart';
+import 'package:flutter_sound/flutter_sound.dart'
+    show Codec, FlutterSoundPlayer;
+import 'package:record/record.dart';
 
-/// Мікрофон і відтворення голосу персонажа через flutter_sound (одна
-/// бібліотека для обох напрямків — менше ризику конфлікту аудіосесії на
-/// Android). Половинний дуплекс: поки персонаж говорить, мікрофон
-/// вимкнено — так само, як web/static/quest-gemini.js::markSpeaking()
-/// робить це в браузері (мутимо, поки не «дограє» черга відтворення).
+/// Мікрофон і відтворення голосу персонажа — навмисно ДВІ РІЗНІ бібліотеки:
+/// `record` для захоплення, `flutter_sound` лише для відтворення. Раніше
+/// обидва напрямки йшли через flutter_sound, і це спричиняло справжній
+/// нативний SIGSEGV у AudioTrack (підтверджено crash-трасуванням з
+/// пристрою) — одночасне використання recorder+player в flutter_sound є
+/// відомою невирішеною проблемою пакета (github.com/Canardoux/flutter_sound
+/// issue #1091). Розділення на дві незалежні нативні реалізації прибирає
+/// спільний внутрішній стан, який і падав.
+///
+/// Половинний дуплекс: поки персонаж говорить, мікрофон вимкнено — так
+/// само, як web/static/quest-gemini.js::markSpeaking() робить це в
+/// браузері (мутимо, поки не «дограє» черга відтворення).
 class AudioPipeline {
-  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  final AudioRecorder _recorder = AudioRecorder();
   final FlutterSoundPlayer _player = FlutterSoundPlayer();
 
-  StreamController<Uint8List>? _micRaw;
   StreamSubscription<Uint8List>? _micSub;
   bool _opened = false;
   bool _muted = false;
@@ -31,7 +39,6 @@ class AudioPipeline {
 
   Future<void> open() async {
     if (_opened) return;
-    await _recorder.openRecorder();
     await _player.openPlayer();
     _stopwatch.start();
     _opened = true;
@@ -52,18 +59,16 @@ class AudioPipeline {
     _playerReady = false;
     _pendingChunks.clear();
 
-    _micRaw = StreamController<Uint8List>();
-    _micSub = _micRaw!.stream.listen((data) {
+    final micStream = await _recorder.startStream(
+      RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: inputSampleRate,
+        numChannels: 1,
+      ),
+    );
+    _micSub = micStream.listen((data) {
       if (!_muted) onMic(data);
     });
-
-    await _recorder.startRecorder(
-      codec: Codec.pcm16,
-      toStream: _micRaw!.sink,
-      sampleRate: inputSampleRate,
-      numChannels: 1,
-      audioSource: AudioSource.microphone,
-    );
 
     await _player.startPlayerFromStream(
       codec: Codec.pcm16,
@@ -143,25 +148,25 @@ class AudioPipeline {
     _playerReady = false;
     _pendingChunks.clear();
     try {
-      await _recorder.stopRecorder();
+      await _recorder.stop();
     } catch (_) {}
     try {
       await _player.stopPlayer();
     } catch (_) {}
     await _micSub?.cancel();
-    await _micRaw?.close();
     _micSub = null;
-    _micRaw = null;
     _muted = false;
   }
 
   Future<void> dispose() async {
     await stop();
     if (_opened) {
-      await _recorder.closeRecorder();
       await _player.closePlayer();
       _opened = false;
     }
+    try {
+      await _recorder.dispose();
+    } catch (_) {}
     _stopwatch.stop();
   }
 }

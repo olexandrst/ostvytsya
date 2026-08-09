@@ -37,6 +37,7 @@ dependencies:
   flutter_secure_storage: ^11.0.0
   web_socket_channel: ^3.0.3
   flutter_sound: ^9.30.0
+  record: ^7.1.1
   permission_handler: ^13.0.0
   path_provider: ^2.1.5
   path: ^1.9.1
