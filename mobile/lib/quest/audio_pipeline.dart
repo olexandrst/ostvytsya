@@ -7,16 +7,19 @@ import 'package:record/record.dart';
 
 /// Мікрофон і відтворення голосу персонажа — навмисно ДВІ РІЗНІ бібліотеки:
 /// `record` для захоплення, `flutter_sound` лише для відтворення. Раніше
-/// обидва напрямки йшли через flutter_sound, і це спричиняло справжній
-/// нативний SIGSEGV у AudioTrack (підтверджено crash-трасуванням з
-/// пристрою) — одночасне використання recorder+player в flutter_sound є
-/// відомою невирішеною проблемою пакета (github.com/Canardoux/flutter_sound
-/// issue #1091). Розділення на дві незалежні нативні реалізації прибирає
-/// спільний внутрішній стан, який і падав.
+/// обидва напрямки йшли через flutter_sound — окреме розділення пакетів
+/// саме по собі не прибрало нативний SIGSEGV у AudioTrack (підтверджено
+/// повторним крахом із тим самим сигнатуром навіть після розділення), тож
+/// причина глибша за flutter_sound: цей конкретний пристрій (Samsung
+/// Galaxy A35, Android 16) не витримує, коли AudioRecord (мікрофон) і
+/// AudioTrack (колонка) апаратно активні ОДНОЧАСНО, незалежно від того,
+/// який плагін ними керує.
 ///
-/// Половинний дуплекс: поки персонаж говорить, мікрофон вимкнено — так
-/// само, як web/static/quest-gemini.js::markSpeaking() робить це в
-/// браузері (мутимо, поки не «дограє» черга відтворення).
+/// Тому мікрофон тепер апаратно ЗУПИНЯЄТЬСЯ на час, поки персонаж говорить
+/// (а не просто ігнорується на Dart-рівні, як було раніше), і стартує знову
+/// щойно черга відтворення спорожніє — AudioRecord і AudioTrack ніколи не
+/// працюють одночасно. Старт/стоп мікрофона серіалізовано через _micOpChain,
+/// щоб не накладати виклики один на одного.
 class AudioPipeline {
   final AudioRecorder _recorder = AudioRecorder();
   final FlutterSoundPlayer _player = FlutterSoundPlayer();
@@ -24,9 +27,14 @@ class AudioPipeline {
   StreamSubscription<Uint8List>? _micSub;
   bool _opened = false;
   bool _muted = false;
+  bool _recorderRunning = false;
   double _queuedUntil = 0; // монотонний час (секунди) спорожнення черги
   Timer? _unmuteTimer;
   final _stopwatch = Stopwatch();
+  Future<void> _micOpChain = Future<void>.value();
+
+  int? _inputSampleRate;
+  void Function(Uint8List pcm16)? _onMic;
 
   // Плеєр стартує асинхронно (нативний виклик), а перший шматок голосу
   // персонажа може прийти від транспорту раніше, ніж startPlayerFromStream
@@ -46,8 +54,40 @@ class AudioPipeline {
 
   double get _now => _stopwatch.elapsedMicroseconds / 1e6;
 
+  /// Виконати наступну операцію з мікрофоном лише після завершення
+  /// попередньої — інакше start()/stop() можуть накластися один на одного.
+  Future<void> _queueMicOp(Future<void> Function() op) {
+    final next = _micOpChain.then((_) => op()).catchError((_) {});
+    _micOpChain = next;
+    return next;
+  }
+
+  Future<void> _startRecorderStream() async {
+    if (_recorderRunning || _inputSampleRate == null) return;
+    _recorderRunning = true;
+    final micStream = await _recorder.startStream(
+      RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: _inputSampleRate!,
+        numChannels: 1,
+      ),
+    );
+    _micSub = micStream.listen((data) => _onMic?.call(data));
+  }
+
+  Future<void> _stopRecorderStream() async {
+    if (!_recorderRunning) return;
+    _recorderRunning = false;
+    await _micSub?.cancel();
+    _micSub = null;
+    try {
+      await _recorder.stop();
+    } catch (_) {}
+  }
+
   /// Почати захоплення мікрофону й потоковий програвач голосу персонажа.
-  /// [onMic] отримує сирі PCM16-шматки, лише коли мікрофон не заглушено.
+  /// [onMic] отримує сирі PCM16-шматки — лише поки персонаж мовчить,
+  /// оскільки мікрофон апаратно вимкнено на час його репліки.
   Future<void> start({
     required int inputSampleRate,
     required int outputSampleRate,
@@ -58,17 +98,10 @@ class AudioPipeline {
     _queuedUntil = 0;
     _playerReady = false;
     _pendingChunks.clear();
+    _inputSampleRate = inputSampleRate;
+    _onMic = onMic;
 
-    final micStream = await _recorder.startStream(
-      RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: inputSampleRate,
-        numChannels: 1,
-      ),
-    );
-    _micSub = micStream.listen((data) {
-      if (!_muted) onMic(data);
-    });
+    await _queueMicOp(_startRecorderStream);
 
     await _player.startPlayerFromStream(
       codec: Codec.pcm16,
@@ -108,11 +141,18 @@ class AudioPipeline {
   }
 
   void _muteFor(int byteLength, int sampleRate) {
+    final wasMuted = _muted;
     final samples = byteLength / 2; // PCM16 = 2 байти на семпл
     final duration = samples / sampleRate;
     final now = _now;
     _queuedUntil = (_queuedUntil < now ? now : _queuedUntil) + duration;
     _muted = true;
+
+    if (!wasMuted) {
+      // Персонаж щойно почав говорити — вимикаємо мікрофон апаратно, щоб
+      // AudioRecord і AudioTrack не працювали одночасно.
+      unawaited(_queueMicOp(_stopRecorderStream));
+    }
 
     _unmuteTimer?.cancel();
     final ms = (((_queuedUntil - now) * 1000).round() + 500)
@@ -121,6 +161,7 @@ class AudioPipeline {
     final delay = Duration(milliseconds: ms);
     _unmuteTimer = Timer(delay, () {
       _muted = false;
+      unawaited(_queueMicOp(_startRecorderStream));
     });
   }
 
@@ -140,6 +181,7 @@ class AudioPipeline {
     _unmuteTimer?.cancel();
     _muted = false;
     _queuedUntil = 0;
+    unawaited(_queueMicOp(_startRecorderStream));
   }
 
   Future<void> stop() async {
@@ -147,14 +189,11 @@ class AudioPipeline {
     _unmuteTimer = null;
     _playerReady = false;
     _pendingChunks.clear();
-    try {
-      await _recorder.stop();
-    } catch (_) {}
+    _onMic = null;
+    await _queueMicOp(_stopRecorderStream);
     try {
       await _player.stopPlayer();
     } catch (_) {}
-    await _micSub?.cancel();
-    _micSub = null;
     _muted = false;
   }
 
