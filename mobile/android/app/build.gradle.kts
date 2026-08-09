@@ -6,7 +6,9 @@ plugins {
 
 android {
     namespace = "com.ostvytsya.ostvytsya_quest"
-    compileSdk = flutter.compileSdkVersion
+    // flutter_secure_storage й permission_handler_android вимагають compileSdk
+    // 37 — вище за типове flutter.compileSdkVersion цієї версії Flutter.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
