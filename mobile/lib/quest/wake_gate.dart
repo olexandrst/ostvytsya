@@ -1,19 +1,22 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:record/record.dart';
 import 'package:vosk_flutter_service/vosk_flutter_service.dart';
 
 import '../constants.dart';
+import '../services/audio_device_service.dart';
+import '../services/settings_store.dart';
 import 'wake_matcher.dart';
 
 /// Локальне (офлайн, без мережі) очікування кодового слова персонажа —
 /// порт domovyk_quest/wake/vosk_wake.py. Квест і сесія Gemini/OpenAI НЕ
 /// стартують, поки [waitForWake] не поверне true.
 ///
-/// Модель Vosk (українська, "nano") на диску телефону не бере жодного місця
-/// в APK — вона качається й кешується один раз при першому використанні
-/// (ModelLoader.loadFromNetwork сам перевіряє, чи вже завантажена).
+/// Модель Vosk на диску телефону не бере жодного місця в APK — вона качається
+/// й кешується один раз при першому використанні (ModelLoader.loadFromNetwork
+/// сам перевіряє, чи вже завантажена).
 ///
 /// Мікрофон тут — ОКРЕМИЙ інстанс `record`, незалежний від AudioPipeline
 /// (котра керує мікрофоном під час самого квесту). Ніколи не працюють
@@ -29,6 +32,8 @@ class WakeGateService {
   static const _maxConsecutiveErrors = 50;
 
   final AudioRecorder _recorder = AudioRecorder();
+  final AudioDeviceService _deviceService = AudioDeviceService();
+  final SettingsStore _settings = SettingsStore();
   Recognizer? _recognizer;
   Future<void>? _readyFuture;
 
@@ -63,6 +68,16 @@ class WakeGateService {
     }
   }
 
+  Future<String?> _resolveInputDeviceId() async {
+    try {
+      final devices = await _deviceService.listInputDevices();
+      final preferred = await _settings.getPreferredInputDeviceId();
+      return AudioDeviceService.resolve(devices, preferred)?.id;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Слухати мікрофон локально, доки не почується одне з [wakeWords], або
   /// доки [isStopRequested] не почне повертати true (користувач натиснув
   /// «Зупинити»). Повертає true лише якщо почуто кодове слово.
@@ -79,50 +94,76 @@ class WakeGateService {
       if (!completer.isCompleted) completer.complete(value);
     }
 
-    final stream = await _recorder.startStream(
-      const RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: sampleRate,
-        numChannels: 1,
-      ),
-    );
+    StreamSubscription<Uint8List>? sub;
+    var consecutiveErrors = 0;
+    var lastPartial = '';
+    var currentDeviceId = await _resolveInputDeviceId();
+
+    Future<void> startStream() async {
+      final stream = await _recorder.startStream(
+        RecordConfig(
+          encoder: AudioEncoder.pcm16bits,
+          sampleRate: sampleRate,
+          numChannels: 1,
+          device: currentDeviceId == null
+              ? null
+              : InputDevice(id: currentDeviceId!, label: ''),
+        ),
+      );
+      sub = stream.listen((chunk) async {
+        if (completer.isCompleted) return;
+        try {
+          final ready = await recognizer.acceptWaveformBytes(chunk);
+          final raw = ready
+              ? await recognizer.getResult()
+              : await recognizer.getPartialResult();
+          final text = _extractText(raw, ready);
+          consecutiveErrors = 0;
+          if (text.isNotEmpty && text != lastPartial) {
+            lastPartial = text;
+            _diagCtrl.add('Чую: «$text»');
+          }
+          if (text.isNotEmpty &&
+              matchesWakeWord(text, wakeWords, threshold: _fuzzyThreshold)) {
+            finish(true);
+          }
+        } catch (e) {
+          consecutiveErrors++;
+          if (consecutiveErrors == 1 || consecutiveErrors % 20 == 0) {
+            _diagCtrl.add('Помилка розпізнавання (×$consecutiveErrors): $e');
+          }
+          if (consecutiveErrors >= _maxConsecutiveErrors &&
+              !completer.isCompleted) {
+            completer.completeError(
+              Exception('Розпізнавання постійно падає: $e'),
+            );
+          }
+        }
+      });
+    }
+
+    await startStream();
+
+    // Поки чекаємо кодове слово (могло бути й довго), реагуємо на
+    // під'єднання/від'єднання пристроїв: якщо найкращий доступний мікрофон
+    // змінився — перезапускаємо потік на новому, не гублячи сам факт
+    // очікування (квест і так ще не почався).
+    final deviceChangeSub = AudioDeviceService.onDevicesChanged.listen((
+      _,
+    ) async {
+      if (completer.isCompleted) return;
+      final newId = await _resolveInputDeviceId();
+      if (newId == currentDeviceId) return;
+      currentDeviceId = newId;
+      await sub?.cancel();
+      try {
+        await _recorder.stop();
+      } catch (_) {}
+      if (!completer.isCompleted) await startStream();
+    });
 
     final stopTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (isStopRequested()) finish(false);
-    });
-
-    var consecutiveErrors = 0;
-    var lastPartial = '';
-
-    final sub = stream.listen((chunk) async {
-      if (completer.isCompleted) return;
-      try {
-        final ready = await recognizer.acceptWaveformBytes(chunk);
-        final raw = ready
-            ? await recognizer.getResult()
-            : await recognizer.getPartialResult();
-        final text = _extractText(raw, ready);
-        consecutiveErrors = 0;
-        if (text.isNotEmpty && text != lastPartial) {
-          lastPartial = text;
-          _diagCtrl.add('Чую: «$text»');
-        }
-        if (text.isNotEmpty &&
-            matchesWakeWord(text, wakeWords, threshold: _fuzzyThreshold)) {
-          finish(true);
-        }
-      } catch (e) {
-        consecutiveErrors++;
-        if (consecutiveErrors == 1 || consecutiveErrors % 20 == 0) {
-          _diagCtrl.add('Помилка розпізнавання (×$consecutiveErrors): $e');
-        }
-        if (consecutiveErrors >= _maxConsecutiveErrors &&
-            !completer.isCompleted) {
-          completer.completeError(
-            Exception('Розпізнавання постійно падає: $e'),
-          );
-        }
-      }
     });
 
     try {
@@ -130,7 +171,8 @@ class WakeGateService {
       return result;
     } finally {
       stopTimer.cancel();
-      await sub.cancel();
+      await deviceChangeSub.cancel();
+      await sub?.cancel();
       try {
         await _recorder.stop();
       } catch (_) {}

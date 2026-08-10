@@ -41,6 +41,8 @@ dependencies:
   path_provider: ^2.1.5
   path: ^1.9.1
   vosk_flutter_service: ^0.1.2
+  archive: ^4.0.9
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

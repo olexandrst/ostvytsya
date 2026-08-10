@@ -4,6 +4,9 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -11,6 +14,7 @@ import android.provider.Settings
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.text.SimpleDateFormat
@@ -26,11 +30,28 @@ import java.util.Locale
  */
 class MainActivity : FlutterActivity() {
     private val channelName = "com.ostvytsya.ostvytsya_quest/foreground"
+    private val audioDevicesChannelName = "com.ostvytsya.ostvytsya_quest/audio_devices"
     private val TAG = "MainActivity"
     private val pcmPlayer = PcmAudioPlayer()
+    private var audioDeviceCallback: AudioDeviceCallback? = null
+    private var audioDeviceEventSink: EventChannel.EventSink? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, audioDevicesChannelName)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                    audioDeviceEventSink = events
+                    registerAudioDeviceCallback()
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    unregisterAudioDeviceCallback()
+                    audioDeviceEventSink = null
+                }
+            })
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
             // Жодна з цих дій не має права звалити застосунок — краще
             // повернути помилку в Dart, ніж упустити виняток нативного коду
@@ -86,6 +107,15 @@ class MainActivity : FlutterActivity() {
                         pcmPlayer.stop()
                         result.success(null)
                     }
+                    "pcmPlayerSetOutputDevice" -> {
+                        val deviceId = call.argument<Int>("deviceId")
+                        pcmPlayer.setPreferredDevice(applicationContext, deviceId)
+                        result.success(null)
+                    }
+                    "listAudioDevices" -> {
+                        val direction = call.argument<String>("direction") ?: "input"
+                        result.success(AudioDeviceUtils.listDevices(applicationContext, direction))
+                    }
                     else -> result.notImplemented()
                 }
             } catch (t: Throwable) {
@@ -101,6 +131,36 @@ class MainActivity : FlutterActivity() {
         } else {
             startService(intent)
         }
+    }
+
+    /**
+     * Слухаємо під'єднання/від'єднання аудіо-пристроїв (навушники, USB,
+     * Bluetooth), щоб Dart-бік міг переобрати найкращий доступний пристрій
+     * без переривання квесту (requirement: автоперемикання при відключенні).
+     * Самі деталі пристрою Dart не потребує тут — просто перечитує список
+     * через listAudioDevices при кожній події.
+     */
+    private fun registerAudioDeviceCallback() {
+        if (audioDeviceCallback != null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val cb = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+                audioDeviceEventSink?.success("changed")
+            }
+
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+                audioDeviceEventSink?.success("changed")
+            }
+        }
+        audioDeviceCallback = cb
+        am.registerAudioDeviceCallback(cb, null)
+    }
+
+    private fun unregisterAudioDeviceCallback() {
+        val cb = audioDeviceCallback ?: return
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        am.unregisterAudioDeviceCallback(cb)
+        audioDeviceCallback = null
     }
 
     /**

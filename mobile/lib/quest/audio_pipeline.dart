@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:record/record.dart';
 
+import '../services/audio_device_service.dart';
+import '../services/settings_store.dart';
 import 'native_pcm_player.dart';
 
 /// Мікрофон і відтворення голосу персонажа — навмисно ДВІ РІЗНІ реалізації:
@@ -21,8 +23,11 @@ import 'native_pcm_player.dart';
 class AudioPipeline {
   final AudioRecorder _recorder = AudioRecorder();
   final NativePcmPlayer _player = NativePcmPlayer();
+  final AudioDeviceService _deviceService = AudioDeviceService();
+  final SettingsStore _settings = SettingsStore();
 
   StreamSubscription<Uint8List>? _micSub;
+  StreamSubscription<void>? _deviceChangeSub;
   bool _opened = false;
   bool _muted = false;
   bool _recorderRunning = false;
@@ -33,6 +38,8 @@ class AudioPipeline {
 
   int? _inputSampleRate;
   void Function(Uint8List pcm16)? _onMic;
+  AudioDevice? _resolvedInputDevice;
+  AudioDevice? _resolvedOutputDevice;
 
   // Плеєр стартує асинхронно (нативний виклик), а перший шматок голосу
   // персонажа може прийти від транспорту раніше, ніж він встигне
@@ -68,14 +75,54 @@ class AudioPipeline {
   Future<void> _startRecorderStream() async {
     if (_recorderRunning || _inputSampleRate == null) return;
     _recorderRunning = true;
+    final device = _resolvedInputDevice;
     final micStream = await _recorder.startStream(
       RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: _inputSampleRate!,
         numChannels: 1,
+        device: device == null
+            ? null
+            : InputDevice(id: device.id, label: device.label),
       ),
     );
     _micSub = micStream.listen((data) => _onMic?.call(data));
+  }
+
+  /// Перечитати список входу/виходу й обрати найкращий: власний вибір
+  /// користувача (якщо досі доступний), інакше автоматично за пріоритетом
+  /// (провідний → bluetooth → вбудований).
+  Future<void> _resolveAudioDevices() async {
+    try {
+      final inputs = await _deviceService.listInputDevices();
+      final outputs = await _deviceService.listOutputDevices();
+      final preferredIn = await _settings.getPreferredInputDeviceId();
+      final preferredOut = await _settings.getPreferredOutputDeviceId();
+      _resolvedInputDevice = AudioDeviceService.resolve(inputs, preferredIn);
+      _resolvedOutputDevice = AudioDeviceService.resolve(outputs, preferredOut);
+    } catch (_) {
+      // Автопідбір недоступний (старий Android / помилка) — лишаємось на
+      // пристрої за замовчуванням, як і раніше.
+    }
+  }
+
+  /// Реакція на під'єднання/від'єднання аудіо-пристрою: переобрати
+  /// найкращий доступний БЕЗ переривання сесії. Вихід перемикається на
+  /// льоту (AudioTrack.setPreferredDevice не потребує зупинки), вхід
+  /// перезапускається лише якщо він зараз активний і справді змінився.
+  Future<void> _onDevicesChanged() async {
+    if (!_opened) return;
+    final prevInputId = _resolvedInputDevice?.id;
+    final prevOutputId = _resolvedOutputDevice?.id;
+    await _resolveAudioDevices();
+
+    if (_resolvedOutputDevice?.id != prevOutputId) {
+      await _deviceService.setOutputDevice(_resolvedOutputDevice?.id);
+    }
+    if (_resolvedInputDevice?.id != prevInputId && _recorderRunning) {
+      await _queueMicOp(_stopRecorderStream);
+      await _queueMicOp(_startRecorderStream);
+    }
   }
 
   Future<void> _stopRecorderStream() async {
@@ -113,7 +160,16 @@ class AudioPipeline {
     _inputSampleRate = inputSampleRate;
     _onMic = onMic;
 
+    await _resolveAudioDevices();
+    await _deviceChangeSub?.cancel();
+    _deviceChangeSub = AudioDeviceService.onDevicesChanged.listen((_) {
+      unawaited(_onDevicesChanged());
+    });
+
     await _player.start(outputSampleRate);
+    if (_resolvedOutputDevice != null) {
+      await _deviceService.setOutputDevice(_resolvedOutputDevice!.id);
+    }
 
     _playerReady = true;
     final pending = List<(Uint8List, int)>.from(_pendingChunks);
@@ -201,6 +257,8 @@ class AudioPipeline {
     _playerReady = false;
     _pendingChunks.clear();
     _onMic = null;
+    await _deviceChangeSub?.cancel();
+    _deviceChangeSub = null;
     await _queueMicOp(_stopRecorderStream);
     await _player.stop();
     _muted = false;

@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:vosk_flutter_service/vosk_flutter_service.dart';
 
-import '../constants.dart';
 import '../models/character.dart';
 import '../services/character_store.dart';
 import '../services/crash_log.dart';
+import '../services/vosk_model_downloader.dart';
 import 'character_edit_screen.dart';
 import 'quest_screen.dart';
 import 'settings_screen.dart';
@@ -20,11 +19,13 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _store = CharacterStore();
   final _crashLog = CrashLogService();
+  final _voskDownloader = VoskModelDownloader();
   List<Character>? _characters;
 
   bool _voskReady = false;
   String? _voskError;
-  String _voskStatus = 'Перевіряю голосову модель Vosk...';
+  bool _voskChecking = true;
+  VoskDownloadProgress? _voskProgress;
 
   @override
   void initState() {
@@ -45,17 +46,21 @@ class _HomeScreenState extends State<HomeScreen> {
   /// екрані квесту, поки модель вперше качається з мережі. Доки це не
   /// завершиться, список персонажів і старт квесту заблоковані.
   Future<void> _preloadVoskModel() async {
+    setState(() {
+      _voskError = null;
+      _voskChecking = true;
+      _voskProgress = null;
+    });
     try {
-      final modelName = kVoskModelUrl.split('/').last.replaceAll('.zip', '');
-      final alreadyLoaded = await ModelLoader().isModelAlreadyLoaded(modelName);
+      final alreadyLoaded = await _voskDownloader.isAlreadyDownloaded();
       if (!alreadyLoaded && mounted) {
-        setState(
-          () => _voskStatus =
-              'Завантажую голосову модель Vosk (лише один раз, потім '
-              'кешується на пристрої)...',
-        );
+        setState(() => _voskChecking = false);
       }
-      await ModelLoader().loadFromNetwork(kVoskModelUrl);
+      await _voskDownloader.download(
+        onProgress: (p) {
+          if (mounted) setState(() => _voskProgress = p);
+        },
+      );
       if (mounted) setState(() => _voskReady = true);
     } catch (e) {
       if (mounted) {
@@ -179,13 +184,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Text(_voskError!, textAlign: TextAlign.center),
               const SizedBox(height: 24),
               FilledButton(
-                onPressed: () {
-                  setState(() {
-                    _voskError = null;
-                    _voskStatus = 'Перевіряю голосову модель Vosk...';
-                  });
-                  _preloadVoskModel();
-                },
+                onPressed: _preloadVoskModel,
                 child: const Text('Спробувати ще раз'),
               ),
             ],
@@ -193,15 +192,74 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
+
+    final progress = _voskProgress;
+    final fraction = progress?.fraction;
+    final receivedMb = progress == null ? null : progress.received / 1e6;
+    final totalMb = progress?.total == null ? null : progress!.total! / 1e6;
+    final scheme = Theme.of(context).colorScheme;
+
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 24),
-            Text(_voskStatus, textAlign: TextAlign.center),
+            SizedBox(
+              width: 148,
+              height: 148,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  SizedBox(
+                    width: 148,
+                    height: 148,
+                    child: TweenAnimationBuilder<double>(
+                      duration: const Duration(milliseconds: 250),
+                      tween: Tween(begin: 0, end: fraction ?? 0),
+                      builder: (context, value, _) => CircularProgressIndicator(
+                        value: fraction == null ? null : value,
+                        strokeWidth: 10,
+                        strokeCap: StrokeCap.round,
+                        backgroundColor: scheme.surfaceContainerHighest,
+                      ),
+                    ),
+                  ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.graphic_eq, size: 30, color: scheme.primary),
+                      const SizedBox(height: 6),
+                      Text(
+                        fraction != null ? '${(fraction * 100).round()}%' : '',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 28),
+            Text(
+              _voskChecking
+                  ? 'Перевіряю голосову модель Vosk...'
+                  : 'Завантажую голосову модель (лише один раз, потім '
+                        'кешується на пристрої)...',
+              style: Theme.of(context).textTheme.titleMedium,
+              textAlign: TextAlign.center,
+            ),
+            if (receivedMb != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                totalMb != null
+                    ? '${receivedMb.toStringAsFixed(1)} із '
+                          '${totalMb.toStringAsFixed(1)} МБ'
+                    : '${receivedMb.toStringAsFixed(1)} МБ',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: scheme.outline),
+              ),
+            ],
           ],
         ),
       ),

@@ -1,5 +1,6 @@
 package com.ostvytsya.ostvytsya_quest
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -60,6 +61,29 @@ class PcmAudioPlayer {
             } catch (err: Throwable) {
                 Log.e(TAG, "Не вдалося створити AudioTrack", err)
                 audioTrack = null
+            }
+        }
+    }
+
+    /**
+     * Прив'язати вихід до конкретного пристрою "на льоту" — AudioTrack
+     * підтримує зміну preferredDevice без зупинки чи перестворення (звук не
+     * переривається). null знімає прив'язку — система сама вибирає
+     * найкращий доступний пристрій.
+     */
+    fun setPreferredDevice(context: Context, deviceId: Int?) {
+        val h = handler ?: return
+        h.post {
+            val track = audioTrack ?: return@post
+            try {
+                val device = if (deviceId == null) {
+                    null
+                } else {
+                    AudioDeviceUtils.findDevice(context, "output", deviceId)
+                }
+                track.setPreferredDevice(device)
+            } catch (err: Throwable) {
+                Log.e(TAG, "Не вдалося встановити пристрій виводу", err)
             }
         }
     }
