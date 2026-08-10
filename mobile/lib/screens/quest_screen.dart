@@ -46,6 +46,10 @@ class _QuestScreenState extends State<QuestScreen> {
       return;
     }
     await Permission.notification.request();
+    // Не критично — якщо відмовлено, автопідбір аудіо-пристрою просто не
+    // побачить Bluetooth-навушники/мікрофони (Android 12+ приховує їх без
+    // цього дозволу), провідні й вбудований пристрій лишаються доступні.
+    await Permission.bluetoothConnect.request();
 
     final character = widget.character;
     final apiKey = character.provider == 'google'

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../services/audio_device_service.dart';
 import '../services/settings_store.dart';
@@ -48,6 +49,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _geminiCtrl.text = gemini ?? '';
     _openaiCtrl.text = openai ?? '';
     _instanceIdCtrl.text = instanceId;
+    // Без цього дозволу Android 12+ приховує Bluetooth-пристрої зі списку
+    // (AudioManager.getDevices) — без нього автопідбір їх просто не бачить.
+    await Permission.bluetoothConnect.request();
     await _loadDevices();
     if (mounted) setState(() => _loading = false);
   }
