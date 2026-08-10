@@ -125,8 +125,21 @@ class AudioPipeline {
       final outputs = await _deviceService.listOutputDevices();
       final preferredIn = await _settings.getPreferredInputDeviceId();
       final preferredOut = await _settings.getPreferredOutputDeviceId();
-      _resolvedInputDevice = AudioDeviceService.resolve(inputs, preferredIn);
-      _resolvedOutputDevice = AudioDeviceService.resolve(outputs, preferredOut);
+
+      // Якщо доступний лише ОДИН пристрій (типовий випадок — жодного
+      // зовнішнього не під'єднано) і користувач нічого явно не обрав у
+      // налаштуваннях — не чіпаємо маршрутизацію взагалі й лишаємо
+      // Android-у самому нею керувати, як і до цієї фічі. Явний виклик
+      // setPreferredDevice()/RecordConfig.device в цьому тривіальному
+      // випадку (нема з чого обирати) призводив до повної тиші — регресія,
+      // підтверджена на реальному пристрої без жодного зовнішнього гаджета.
+      _resolvedInputDevice = (inputs.length > 1 || preferredIn != null)
+          ? AudioDeviceService.resolve(inputs, preferredIn)
+          : null;
+      _resolvedOutputDevice = (outputs.length > 1 || preferredOut != null)
+          ? AudioDeviceService.resolve(outputs, preferredOut)
+          : null;
+
       _diagCtrl.add(
         'Знайдено пристроїв: вхід ${inputs.length}, вихід ${outputs.length}. '
         'Обрано: вхід «${_resolvedInputDevice?.label ?? "за замовчуванням"}», '
