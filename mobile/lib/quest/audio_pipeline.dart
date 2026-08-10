@@ -54,6 +54,14 @@ class AudioPipeline {
   // взагалі без аудіо (напр. збій транспорту).
   bool _everFed = false;
 
+  final _diagCtrl = StreamController<String>.broadcast();
+
+  /// Людяні діагностичні повідомлення про вибір аудіо-пристрою: який
+  /// вхід/вихід обрано (і чому), коли мікрофон реально стартує з ним.
+  /// Показується в транскрипті квесту — інакше "не чує зовнішній мікрофон"
+  /// неможливо відрізнити від "автопідбір обрав не той пристрій" наосліп.
+  Stream<String> get diagnostics => _diagCtrl.stream;
+
   bool get isMuted => _muted;
 
   Future<void> open() async {
@@ -76,6 +84,12 @@ class AudioPipeline {
     if (_recorderRunning || _inputSampleRate == null) return;
     _recorderRunning = true;
     final device = _resolvedInputDevice;
+    _diagCtrl.add(
+      device == null
+          ? 'Мікрофон: стартую на пристрої за замовчуванням (автопідбір '
+                'недоступний або нічого не знайдено).'
+          : 'Мікрофон: стартую на «${device.label}» (${_bucketLabel(device.bucket)}).',
+    );
     final micStream = await _recorder.startStream(
       RecordConfig(
         encoder: AudioEncoder.pcm16bits,
@@ -89,6 +103,19 @@ class AudioPipeline {
     _micSub = micStream.listen((data) => _onMic?.call(data));
   }
 
+  String _bucketLabel(String bucket) {
+    switch (bucket) {
+      case 'wired':
+        return 'провідний';
+      case 'bluetooth':
+        return 'bluetooth';
+      case 'builtin':
+        return 'вбудований';
+      default:
+        return bucket;
+    }
+  }
+
   /// Перечитати список входу/виходу й обрати найкращий: власний вибір
   /// користувача (якщо досі доступний), інакше автоматично за пріоритетом
   /// (провідний → bluetooth → вбудований).
@@ -100,9 +127,15 @@ class AudioPipeline {
       final preferredOut = await _settings.getPreferredOutputDeviceId();
       _resolvedInputDevice = AudioDeviceService.resolve(inputs, preferredIn);
       _resolvedOutputDevice = AudioDeviceService.resolve(outputs, preferredOut);
-    } catch (_) {
+      _diagCtrl.add(
+        'Знайдено пристроїв: вхід ${inputs.length}, вихід ${outputs.length}. '
+        'Обрано: вхід «${_resolvedInputDevice?.label ?? "за замовчуванням"}», '
+        'вихід «${_resolvedOutputDevice?.label ?? "за замовчуванням"}».',
+      );
+    } catch (e) {
       // Автопідбір недоступний (старий Android / помилка) — лишаємось на
       // пристрої за замовчуванням, як і раніше.
+      _diagCtrl.add('Автопідбір аудіо-пристрою недоступний: $e');
     }
   }
 
@@ -271,5 +304,6 @@ class AudioPipeline {
       await _recorder.dispose();
     } catch (_) {}
     _stopwatch.stop();
+    await _diagCtrl.close();
   }
 }

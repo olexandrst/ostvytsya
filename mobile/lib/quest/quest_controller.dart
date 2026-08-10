@@ -45,6 +45,11 @@ class QuestController {
     wakeGate.diagnostics.listen((msg) {
       _transcriptCtrl.add(TranscriptLine('system', msg));
     });
+    // Так само для вибору аудіо-пристрою під час самого квесту — щоб було
+    // видно, чи автопідбір справді бачить і обирає зовнішній мікрофон.
+    audio.diagnostics.listen((msg) {
+      _transcriptCtrl.add(TranscriptLine('system', msg));
+    });
   }
 
   final Character character;
