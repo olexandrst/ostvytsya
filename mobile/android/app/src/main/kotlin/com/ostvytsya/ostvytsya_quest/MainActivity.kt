@@ -33,6 +33,7 @@ class MainActivity : FlutterActivity() {
     private val audioDevicesChannelName = "com.ostvytsya.ostvytsya_quest/audio_devices"
     private val TAG = "MainActivity"
     private val pcmPlayer = PcmAudioPlayer()
+    private val sessionEncoder = SessionAacEncoder()
     private var audioDeviceCallback: AudioDeviceCallback? = null
     private var audioDeviceEventSink: EventChannel.EventSink? = null
 
@@ -115,6 +116,22 @@ class MainActivity : FlutterActivity() {
                     "listAudioDevices" -> {
                         val direction = call.argument<String>("direction") ?: "input"
                         result.success(AudioDeviceUtils.listDevices(applicationContext, direction))
+                    }
+                    "sessionEncoderStart" -> {
+                        val path = call.argument<String>("path")
+                        val sampleRate = call.argument<Int>("sampleRate") ?: 24000
+                        if (path != null) sessionEncoder.start(path, sampleRate)
+                        result.success(null)
+                    }
+                    "sessionEncoderWrite" -> {
+                        val bytes = call.argument<ByteArray>("bytes")
+                        if (bytes != null) sessionEncoder.write(bytes)
+                        result.success(null)
+                    }
+                    "sessionEncoderStop" -> {
+                        sessionEncoder.stop {
+                            runOnUiThread { result.success(null) }
+                        }
                     }
                     else -> result.notImplemented()
                 }
