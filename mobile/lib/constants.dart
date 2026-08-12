@@ -132,3 +132,13 @@ const double kRestartCooldownS = 2.0;
 /// на головному екрані — щоб обидва місця точно дивились на той самий файл.
 const String kVoskModelUrl =
     'https://alphacephei.com/vosk/models/vosk-model-small-uk-v3-small.zip';
+
+/// SHA коміту, з якого зібрано APK — передається в CI через
+/// `--dart-define=GIT_SHA=...` (.github/workflows/mobile-build.yml). Порожньо
+/// при локальній збірці без цього define (напр. `flutter run`).
+const String _kGitSha = String.fromEnvironment('GIT_SHA');
+
+/// Короткий "номер версії" для показу в налаштуваннях — останні 7 символів
+/// коміту, як звична коротка форма git SHA.
+String get kAppVersion =>
+    _kGitSha.length > 7 ? _kGitSha.substring(_kGitSha.length - 7) : _kGitSha;

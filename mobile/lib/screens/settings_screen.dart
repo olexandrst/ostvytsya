@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../constants.dart';
 import '../services/audio_device_service.dart';
 import '../services/settings_store.dart';
 
@@ -277,6 +278,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ],
                     ),
                   ),
+                ),
+                const SizedBox(height: 32),
+                const Divider(),
+                const SizedBox(height: 8),
+                Text(
+                  'Версія: ${kAppVersion.isEmpty ? 'локальна збірка' : kAppVersion}',
+                  style: const TextStyle(color: Colors.grey),
                 ),
               ],
             ),

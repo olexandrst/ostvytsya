@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../constants.dart';
 import '../models/character.dart';
+import '../services/session_recorder.dart';
 import 'audio_pipeline.dart';
 import 'transcript_utils.dart';
 import 'transport.dart';
@@ -57,6 +58,7 @@ class QuestController {
   final QuestTransportFactory transportFactory;
   final AudioPipeline audio = AudioPipeline();
   final WakeGateService wakeGate = WakeGateService();
+  final SessionRecorder _recorder = SessionRecorder();
 
   final _statusCtrl = StreamController<QuestStatusUpdate>.broadcast();
   final _transcriptCtrl = StreamController<TranscriptLine>.broadcast();
@@ -113,7 +115,15 @@ class QuestController {
       _statusCtrl.add(
         QuestStatusUpdate(QuestPhase.connecting, runCount: _runCount),
       );
+      // Запис починається тут — рівно в момент, коли Vosk почув кодове
+      // слово, — а не пізніше (напр. лише після під'єднання до транспорту),
+      // щоб у файлі лишався весь квест від самого початку.
+      await _recorder.start();
+      _transcriptCtrl.add(
+        TranscriptLine('system', 'Запис сесії: ${_recorder.currentPath}'),
+      );
       final outcome = await _runOnce();
+      await _recorder.stop();
       if (_stopRequested) break;
       _statusCtrl.add(
         QuestStatusUpdate(
@@ -176,7 +186,12 @@ class QuestController {
               .start(
                 inputSampleRate: transport.inputSampleRate,
                 outputSampleRate: transport.outputSampleRate,
-                onMic: transport.sendAudio,
+                onMic: (chunk) {
+                  unawaited(
+                    _recorder.writeMic(chunk, transport.inputSampleRate),
+                  );
+                  transport.sendAudio(chunk);
+                },
               )
               .then((_) {
                 _transcriptCtrl.add(
@@ -247,6 +262,7 @@ class QuestController {
         );
       }
       unawaited(audio.playAgentChunk(chunk, transport.outputSampleRate));
+      unawaited(_recorder.writeAgent(chunk, transport.outputSampleRate));
     });
 
     final watchdog = Timer.periodic(const Duration(seconds: 1), (_) {

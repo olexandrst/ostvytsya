@@ -271,7 +271,21 @@ class _HomeScreenState extends State<HomeScreen> {
     final characters = _characters;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Оствиця — квести'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipOval(
+              child: Image.asset(
+                'assets/icon/icon.png',
+                width: 32,
+                height: 32,
+                fit: BoxFit.cover,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Text('Оствиця — квести'),
+          ],
+        ),
         actions: [
           IconButton(
             tooltip: 'Налаштування',
