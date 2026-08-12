@@ -10,6 +10,7 @@ class SettingsStore {
   static const _instanceIdName = 'app_instance_id';
   static const _inputDeviceIdName = 'preferred_input_device_id';
   static const _outputDeviceIdName = 'preferred_output_device_id';
+  static const _sessionRecordingEnabledName = 'session_recording_enabled';
 
   final _storage = const FlutterSecureStorage();
 
@@ -87,4 +88,14 @@ class SettingsStore {
       await _storage.write(key: _outputDeviceIdName, value: id);
     }
   }
+
+  /// Автозапис кожної сесії квесту в .m4a — вимкнено за замовчуванням
+  /// (експериментальна фіча, займає місце на диску).
+  Future<bool> getSessionRecordingEnabled() async {
+    final v = await _storage.read(key: _sessionRecordingEnabledName);
+    return v == 'true';
+  }
+
+  Future<void> setSessionRecordingEnabled(bool value) =>
+      _storage.write(key: _sessionRecordingEnabledName, value: '$value');
 }

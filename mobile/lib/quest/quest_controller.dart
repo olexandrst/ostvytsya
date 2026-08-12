@@ -3,6 +3,7 @@ import 'dart:async';
 import '../constants.dart';
 import '../models/character.dart';
 import '../services/session_recorder.dart';
+import '../services/settings_store.dart';
 import 'audio_pipeline.dart';
 import 'transcript_utils.dart';
 import 'transport.dart';
@@ -59,6 +60,7 @@ class QuestController {
   final AudioPipeline audio = AudioPipeline();
   final WakeGateService wakeGate = WakeGateService();
   final SessionRecorder _recorder = SessionRecorder();
+  final SettingsStore _settings = SettingsStore();
 
   final _statusCtrl = StreamController<QuestStatusUpdate>.broadcast();
   final _transcriptCtrl = StreamController<TranscriptLine>.broadcast();
@@ -117,11 +119,15 @@ class QuestController {
       );
       // Запис починається тут — рівно в момент, коли Vosk почув кодове
       // слово, — а не пізніше (напр. лише після під'єднання до транспорту),
-      // щоб у файлі лишався весь квест від самого початку.
-      await _recorder.start();
-      _transcriptCtrl.add(
-        TranscriptLine('system', 'Запис сесії: ${_recorder.currentPath}'),
-      );
+      // щоб у файлі лишався весь квест від самого початку. Вимкнено за
+      // замовчуванням (перемикач у налаштуваннях) — поки що
+      // експериментальна фіча.
+      if (await _settings.getSessionRecordingEnabled()) {
+        await _recorder.start();
+        _transcriptCtrl.add(
+          TranscriptLine('system', 'Запис сесії: ${_recorder.currentPath}'),
+        );
+      }
       final outcome = await _runOnce();
       await _recorder.stop();
       if (_stopRequested) break;

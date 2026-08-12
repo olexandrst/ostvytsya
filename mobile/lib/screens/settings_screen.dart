@@ -25,6 +25,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _saving = false;
   bool _showGemini = false;
   bool _showOpenAi = false;
+  bool _sessionRecordingEnabled = false;
 
   List<AudioDevice> _inputDevices = [];
   List<AudioDevice> _outputDevices = [];
@@ -47,6 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final instanceId = await _store.getInstanceId();
     _selectedInputId = await _store.getPreferredInputDeviceId();
     _selectedOutputId = await _store.getPreferredOutputDeviceId();
+    _sessionRecordingEnabled = await _store.getSessionRecordingEnabled();
     _geminiCtrl.text = gemini ?? '';
     _openaiCtrl.text = openai ?? '';
     _instanceIdCtrl.text = instanceId;
@@ -75,6 +77,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _store.setInstanceId(_instanceIdCtrl.text);
     await _store.setPreferredInputDeviceId(_selectedInputId);
     await _store.setPreferredOutputDeviceId(_selectedOutputId);
+    await _store.setSessionRecordingEnabled(_sessionRecordingEnabled);
     if (mounted) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -280,6 +283,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 const SizedBox(height: 32),
+                const Divider(),
+                const SizedBox(height: 8),
+                const Text(
+                  'Запис сесій',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Вимкнено за замовчуванням (експериментально, займає '
+                  'місце на диску — до ~11 МБ на одну сесію). Зберігається '
+                  'у внутрішньому сховищі застосунку, дістати файли можна '
+                  'через adb.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Записувати кожну сесію квесту'),
+                  value: _sessionRecordingEnabled,
+                  onChanged: (v) =>
+                      setState(() => _sessionRecordingEnabled = v),
+                ),
+                const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 8),
                 Text(
