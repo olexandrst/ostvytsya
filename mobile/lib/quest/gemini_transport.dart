@@ -29,9 +29,8 @@ class GeminiTransport implements QuestTransport {
   final _audioController = StreamController<Uint8List>.broadcast();
   StreamSubscription? _sub;
   bool _setupComplete = false;
-  bool _receivedAnyAudio = false;
-  int _recoveryAttempts = 0;
-  Timer? _recoveryTimer;
+  bool _turnHasAudio = false;
+  int _consecutiveSilentTurns = 0;
 
   static const _maxRecoveryAttempts = 2;
 
@@ -111,12 +110,12 @@ class GeminiTransport implements QuestTransport {
       // іде живий голос гравця і який надійно генерує аудіо-відповідь.
       // Перед цим ще й "будимо" аудіо-канал коротким шматком тиші —
       // достеменно той самий шлях, яким генерується голос під час
-      // звичайного ходу з мікрофону.
+      // звичайного ходу з мікрофону. Якщо цей хід теж пройде без аудіо —
+      // про це подбає загальний механізм відновлення в _onTurnComplete().
       _sendSilentAudioPrimer();
       _send({
         'realtime_input': {'text': kGreetingTrigger},
       });
-      _scheduleRecoveryCueIfSilent();
       return;
     }
     _send({
@@ -145,31 +144,32 @@ class GeminiTransport implements QuestTransport {
   }
 
   /// Відомий, визнаний самим Google баг якості gemini-3.1-flash-live-preview
-  /// (google-gemini/cookbook issue #1197): перший хід інколи взагалі не
-  /// озвучується (холодний старт/самоперебивання) — на практиці спрацьовує
-  /// "через раз". Тому пробуємо відновитись до [_maxRecoveryAttempts] разів:
-  /// щоразу коротка тиша + короткий сигнал через realtime_input.text, якщо
-  /// аудіо так і не з'явилось.
-  void _scheduleRecoveryCueIfSilent() {
-    _recoveryTimer?.cancel();
-    _recoveryTimer = Timer(const Duration(milliseconds: 2500), () {
-      if (_receivedAnyAudio ||
-          _channel == null ||
-          _recoveryAttempts >= _maxRecoveryAttempts) {
-        return;
-      }
-      _recoveryAttempts++;
+  /// (google-gemini/cookbook issue #1197): БУДЬ-ЯКИЙ хід (не лише перше
+  /// привітання — підтверджено на реальному пристрої й для звичайних ходів
+  /// посеред квесту) інколи взагалі не озвучується, хоча текст приходить
+  /// повністю. Викликається на кожен turnComplete: якщо за весь хід не
+  /// прийшло жодного шматка аудіо — просимо модель озвучити ту саму
+  /// репліку ще раз (до [_maxRecoveryAttempts] спроб поспіль, далі
+  /// здаємось, щоб не зациклитись, якщо модель геть не хоче говорити).
+  void _onTurnComplete() {
+    if (_turnHasAudio) {
+      _consecutiveSilentTurns = 0;
+    } else if (kGeminiLiveModel.contains('3.1') &&
+        _consecutiveSilentTurns < _maxRecoveryAttempts) {
+      _consecutiveSilentTurns++;
       _sendSilentAudioPrimer();
       _send({
         'realtime_input': {
           'text':
               '[Службовий сигнал — не читай його вголос і не пиши новий '
-              'текст. Просто озвуч вголос СВОЄЮ реплікою те, що ти щойно '
-              'сказав — гравець тебе поки що не почув.]',
+              'текст. Просто озвуч вголос СВОЄЮ останньою реплікою — '
+              'гравець тебе не почув.]',
         },
       });
-      _scheduleRecoveryCueIfSilent();
-    });
+    } else {
+      _consecutiveSilentTurns = 0;
+    }
+    _turnHasAudio = false;
   }
 
   void _onMessage(dynamic raw) {
@@ -211,7 +211,7 @@ class GeminiTransport implements QuestTransport {
             if (inline is Map) {
               final data = inline['data'];
               if (data is String && data.isNotEmpty) {
-                _receivedAnyAudio = true;
+                _turnHasAudio = true;
                 _audioController.add(base64Decode(data));
               }
             }
@@ -250,6 +250,7 @@ class GeminiTransport implements QuestTransport {
       _eventsController.add(
         const QuestTransportEvent(QuestEventKind.turnComplete),
       );
+      _onTurnComplete();
     }
   }
 
@@ -272,7 +273,6 @@ class GeminiTransport implements QuestTransport {
 
   @override
   Future<void> close() async {
-    _recoveryTimer?.cancel();
     await _sub?.cancel();
     await _channel?.sink.close();
     await _eventsController.close();
