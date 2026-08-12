@@ -60,6 +60,13 @@ object AudioDeviceUtils {
         val bucket = bucketFor(type)
         if (bucket == "other") return false
         if (isOutput && type == AudioDeviceInfo.TYPE_BUILTIN_MIC) return false
+        // Розмовний динамік (для дзвінків "до вуха") — набагато тихший за
+        // основний гучномовець і взагалі не для цього застосунку. Якщо його
+        // не виключити, телефони, що показують speaker+earpiece як два
+        // окремих builtin-виходи, ламали правило "не чіпати маршрутизацію,
+        // якщо пристрій лише один" (формально їх два) — автопідбір міг
+        // причепитись саме до тихого розмовного динаміка.
+        if (isOutput && type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) return false
         if (!isOutput &&
             (type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)
         ) return false
