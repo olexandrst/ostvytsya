@@ -29,10 +29,19 @@ class GeminiTransport implements QuestTransport {
   final _audioController = StreamController<Uint8List>.broadcast();
   StreamSubscription? _sub;
   bool _setupComplete = false;
-  bool _turnHasAudio = false;
+  int _turnAudioBytes = 0;
   int _consecutiveSilentTurns = 0;
 
-  static const _maxRecoveryAttempts = 2;
+  static const _maxRecoveryAttempts = 4;
+
+  // Gemini 3.1 інколи повертає технічно "непорожній" inlineData-шматок у
+  // лічені байти (підтверджено на реальному пристрої — рівно 2 байти,
+  // тобто один PCM16-семпл) замість реальної озвучки репліки. Якщо рахувати
+  // БУДЬ-ЯКИЙ непорожній шматок за "хід озвучено", механізм відновлення
+  // нижче зупиняється на цій "заглушці", а дитина фактично нічого не чує.
+  // Тому за успіх рахуємо лише хід, де сумарно прийшло не менше стількох
+  // байт — це вже не разовий артефакт, а справжня коротка фраза.
+  static const _minMeaningfulAudioBytes = 4800; // ~100мс на 24 кГц PCM16
 
   GeminiTransport(this.character, this.apiKey);
 
@@ -146,13 +155,15 @@ class GeminiTransport implements QuestTransport {
   /// Відомий, визнаний самим Google баг якості gemini-3.1-flash-live-preview
   /// (google-gemini/cookbook issue #1197): БУДЬ-ЯКИЙ хід (не лише перше
   /// привітання — підтверджено на реальному пристрої й для звичайних ходів
-  /// посеред квесту) інколи взагалі не озвучується, хоча текст приходить
-  /// повністю. Викликається на кожен turnComplete: якщо за весь хід не
-  /// прийшло жодного шматка аудіо — просимо модель озвучити ту саму
-  /// репліку ще раз (до [_maxRecoveryAttempts] спроб поспіль, далі
-  /// здаємось, щоб не зациклитись, якщо модель геть не хоче говорити).
+  /// посеред квесту) інколи взагалі не озвучується (або озвучується
+  /// мізерною "заглушкою" в кілька байт — теж підтверджено наживо), хоча
+  /// текст приходить повністю. Викликається на кожен turnComplete: якщо за
+  /// весь хід не прийшло досить аудіо ([_minMeaningfulAudioBytes]) —
+  /// просимо модель озвучити ту саму репліку ще раз (до
+  /// [_maxRecoveryAttempts] спроб поспіль, далі здаємось, щоб не
+  /// зациклитись, якщо модель геть не хоче говорити).
   void _onTurnComplete() {
-    if (_turnHasAudio) {
+    if (_turnAudioBytes >= _minMeaningfulAudioBytes) {
       _consecutiveSilentTurns = 0;
     } else if (kGeminiLiveModel.contains('3.1') &&
         _consecutiveSilentTurns < _maxRecoveryAttempts) {
@@ -169,7 +180,7 @@ class GeminiTransport implements QuestTransport {
     } else {
       _consecutiveSilentTurns = 0;
     }
-    _turnHasAudio = false;
+    _turnAudioBytes = 0;
   }
 
   void _onMessage(dynamic raw) {
@@ -211,8 +222,9 @@ class GeminiTransport implements QuestTransport {
             if (inline is Map) {
               final data = inline['data'];
               if (data is String && data.isNotEmpty) {
-                _turnHasAudio = true;
-                _audioController.add(base64Decode(data));
+                final decoded = base64Decode(data);
+                _turnAudioBytes += decoded.length;
+                _audioController.add(decoded);
               }
             }
           }
