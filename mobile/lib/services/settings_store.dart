@@ -2,6 +2,8 @@ import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'device_id_service.dart';
+
 /// Ключі API (Gemini, OpenAI) і локальні налаштування пристрою (жодного
 /// логіна — усе зберігається лише на цьому пристрої).
 class SettingsStore {
@@ -36,15 +38,32 @@ class SettingsStore {
   }
 
   /// Ідентифікатор цього примірника застосунку — за замовчуванням
-  /// згенерований випадково при першому зверненні, але користувач може
-  /// замінити його на власний у налаштуваннях (напр. щоб позначити, який
-  /// телефон/локацію квесту він означає).
+  /// детермінований з Android ID цього конкретного телефону (стабільний
+  /// між перевстановленнями застосунку), але користувач може замінити його
+  /// на власний у налаштуваннях (напр. щоб позначити, яку локацію квесту
+  /// він означає) або натиснути "згенерувати новий" для довільного.
   Future<String> getInstanceId() async {
     final existing = await _storage.read(key: _instanceIdName);
     if (existing != null && existing.trim().isNotEmpty) return existing;
-    final generated = generateInstanceId();
+    final generated = await _defaultInstanceId();
     await _storage.write(key: _instanceIdName, value: generated);
     return generated;
+  }
+
+  /// Прив'язка "цей телефон → цей ідентифікатор" раніше губилась при
+  /// кожному перевстановленні застосунку (генерувався новий випадковий),
+  /// тож користувачу доводилось вручну її відновлювати. Android ID
+  /// (`Settings.Secure.ANDROID_ID`) не потребує дозволів і лишається тим
+  /// самим для застосунку на тому самому пристрої аж до скидання до
+  /// заводських налаштувань — саме те, що потрібно для стабільного
+  /// ідентифікатора "з коробки". Якщо він недоступний (дуже старий Android
+  /// чи збій) — запасний варіант лишається випадковим, як і раніше.
+  Future<String> _defaultInstanceId() async {
+    final androidId = await DeviceIdService().getAndroidId();
+    if (androidId != null && androidId.trim().isNotEmpty) {
+      return _deviceInstanceIdFrom(androidId.trim());
+    }
+    return generateInstanceId();
   }
 
   Future<void> setInstanceId(String value) async {
@@ -54,7 +73,7 @@ class SettingsStore {
   }
 
   /// Людяний, легко відрізнюваний ідентифікатор без символів, які легко
-  /// сплутати (0/O, 1/I).
+  /// сплутати (0/O, 1/I) — випадковий (для ручного "перегенерувати").
   static String generateInstanceId() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     final rnd = Random.secure();
@@ -63,6 +82,30 @@ class SettingsStore {
       (_) => chars[rnd.nextInt(chars.length)],
     ).join();
     return 'OSTV-$suffix';
+  }
+
+  /// Той самий формат "OSTV-XXXXXX", але детермінований від [androidId] —
+  /// однаковий вхід завжди дає однаковий вихід (FNV-1a, без залежності від
+  /// вбудованого String.hashCode, який Dart не гарантує стабільним між
+  /// запусками/версіями рантайму).
+  static String _deviceInstanceIdFrom(String androidId) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    final base = _fnv1a32(androidId);
+    final buf = StringBuffer();
+    for (var i = 0; i < 6; i++) {
+      final mixed = _fnv1a32('$androidId#$i') ^ base;
+      buf.write(chars[mixed % chars.length]);
+    }
+    return 'OSTV-$buf';
+  }
+
+  static int _fnv1a32(String input) {
+    var hash = 0x811c9dc5;
+    for (final unit in input.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    return hash;
   }
 
   /// null/порожньо = автоматичний вибір за пріоритетом

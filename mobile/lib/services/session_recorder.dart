@@ -17,15 +17,31 @@ import 'recordings_store.dart';
 class SessionRecorder {
   static const _targetRate = 24000; // Hz, той самий, що й вихід Gemini/OpenAI
 
+  // Сирий сигнал мікрофону (без AGC/нормалізації) на телефоні, який дитина
+  // тримає на відстані, у записі виходить у рази тихішим за синтезований
+  // голос персонажа (той уже нормалізований на боці Gemini/OpenAI) —
+  // технічно записаний, але на відтворенні майже не чутний. Підсилюємо
+  // перед кодуванням лише мікрофонні шматки, з захистом від кліпінгу.
+  static const _micGain = 4.0;
+
   final _encoder = NativeSessionEncoder();
   String? _path;
   int _samplesWritten = 0;
+  int _micSamplesWritten = 0;
+  int _agentSamplesWritten = 0;
   final _stopwatch = Stopwatch();
   bool _active = false;
   Future<void> _writeChain = Future<void>.value();
 
   bool get isActive => _active;
   String? get currentPath => _path;
+
+  /// Скільки секунд голосу дитини й персонажа реально потрапило в останній
+  /// (щойно завершений) запис — діагностика для транскрипту квесту, щоб
+  /// мовчання одного з джерел було видно одразу, а не лише при
+  /// прослуховуванні файлу.
+  double get lastMicSeconds => _micSamplesWritten / _targetRate;
+  double get lastAgentSeconds => _agentSamplesWritten / _targetRate;
 
   /// Почати новий запис (новий файл). Якщо запис уже йде — нічого не робить.
   Future<void> start() async {
@@ -39,6 +55,8 @@ class SessionRecorder {
     await _encoder.start(path, _targetRate);
     _path = path;
     _samplesWritten = 0;
+    _micSamplesWritten = 0;
+    _agentSamplesWritten = 0;
     _writeChain = Future<void>.value();
     _stopwatch
       ..reset()
@@ -47,13 +65,15 @@ class SessionRecorder {
   }
 
   /// Дописати шматок голосу дитини (мікрофон) з його справжньою частотою
-  /// дискретизації — ресемплюється до [_targetRate], якщо відрізняється.
-  Future<void> writeMic(Uint8List pcm16, int sourceRate) =>
-      _enqueue(() => _writeChunk(pcm16, sourceRate));
+  /// дискретизації — підсилюється й ресемплюється до [_targetRate], якщо
+  /// відрізняється.
+  Future<void> writeMic(Uint8List pcm16, int sourceRate) => _enqueue(
+    () => _writeChunk(_applyGain(pcm16, _micGain), sourceRate, mic: true),
+  );
 
   /// Дописати шматок голосу персонажа.
   Future<void> writeAgent(Uint8List pcm16, int sourceRate) =>
-      _enqueue(() => _writeChunk(pcm16, sourceRate));
+      _enqueue(() => _writeChunk(pcm16, sourceRate, mic: false));
 
   Future<void> _enqueue(Future<void> Function() op) {
     final next = _writeChain.then((_) => op());
@@ -61,14 +81,37 @@ class SessionRecorder {
     return next;
   }
 
-  Future<void> _writeChunk(Uint8List pcm16, int sourceRate) async {
+  Future<void> _writeChunk(
+    Uint8List pcm16,
+    int sourceRate, {
+    required bool mic,
+  }) async {
     if (!_active) return;
     await _padSilenceToNow();
     final resampled = sourceRate == _targetRate
         ? pcm16
         : _resample(pcm16, sourceRate, _targetRate);
     await _encoder.write(resampled);
-    _samplesWritten += resampled.length ~/ 2;
+    final n = resampled.length ~/ 2;
+    _samplesWritten += n;
+    if (mic) {
+      _micSamplesWritten += n;
+    } else {
+      _agentSamplesWritten += n;
+    }
+  }
+
+  /// Просте цифрове підсилення з захистом від кліпінгу (насичення на межах
+  /// Int16, без переповнення).
+  Uint8List _applyGain(Uint8List pcm16, double gain) {
+    final samples = pcm16.length ~/ 2;
+    if (samples == 0) return pcm16;
+    final src = pcm16.buffer.asInt16List(pcm16.offsetInBytes, samples);
+    final out = Int16List(samples);
+    for (var i = 0; i < samples; i++) {
+      out[i] = (src[i] * gain).round().clamp(-32768, 32767);
+    }
+    return out.buffer.asUint8List();
   }
 
   /// Заповнити тишею розрив між тим, скільки семплів реально записано, і

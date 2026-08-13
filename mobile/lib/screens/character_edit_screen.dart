@@ -165,17 +165,17 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
                 onChanged: (v) =>
                     setState(() => _openaiVoice = v ?? _openaiVoice),
               ),
-              const SizedBox(height: 12),
-              Text('Швидкість мовлення: ${_speechSpeed.toStringAsFixed(2)}x'),
-              Slider(
-                value: _speechSpeed,
-                min: 0.25,
-                max: 2.0,
-                divisions: 35,
-                label: '${_speechSpeed.toStringAsFixed(2)}x',
-                onChanged: (v) => setState(() => _speechSpeed = v),
-              ),
             ],
+            const SizedBox(height: 12),
+            Text('Швидкість мовлення: ${_speechSpeed.toStringAsFixed(2)}x'),
+            Slider(
+              value: _speechSpeed,
+              min: 0.25,
+              max: 2.0,
+              divisions: 35,
+              label: '${_speechSpeed.toStringAsFixed(2)}x',
+              onChanged: (v) => setState(() => _speechSpeed = v),
+            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _wakeWordsCtrl,

@@ -90,6 +90,15 @@ class MainActivity : FlutterActivity() {
                     "getLastExitReason" -> {
                         result.success(lastExitReasonText())
                     }
+                    "getAndroidId" -> {
+                        // Стабільний на цьому пристрої (для цього застосунку й
+                        // користувача) 64-бітний ідентифікатор — не потребує
+                        // жодного дозволу, на відміну від IMEI. Скидається лише
+                        // при скиданні до заводських налаштувань.
+                        result.success(
+                            Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+                        )
+                    }
                     "acknowledgeExitReason" -> {
                         acknowledgeExitReason()
                         result.success(null)

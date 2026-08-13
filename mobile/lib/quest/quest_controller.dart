@@ -121,7 +121,8 @@ class QuestController {
       // слово, — а не пізніше (напр. лише після під'єднання до транспорту),
       // щоб у файлі лишався весь квест від самого початку. Перемикається в
       // налаштуваннях (увімкнено за замовчуванням).
-      if (await _settings.getSessionRecordingEnabled()) {
+      final recording = await _settings.getSessionRecordingEnabled();
+      if (recording) {
         await _recorder.start();
         _transcriptCtrl.add(
           TranscriptLine('system', 'Запис сесії: ${_recorder.currentPath}'),
@@ -129,6 +130,20 @@ class QuestController {
       }
       final outcome = await _runOnce();
       await _recorder.stop();
+      if (recording) {
+        // Читаємо лічильники ПІСЛЯ stop() — вона чекає на спорожнення
+        // черги запису, інакше останні ще не оброблені шматки не
+        // потрапили б у цю діагностику.
+        final micS = _recorder.lastMicSeconds.toStringAsFixed(1);
+        final agentS = _recorder.lastAgentSeconds.toStringAsFixed(1);
+        _transcriptCtrl.add(
+          TranscriptLine(
+            'system',
+            // ignore: unnecessary_brace_in_string_interps
+            'Запис: голос дитини ${micS}с, голос персонажа ${agentS}с.',
+          ),
+        );
+      }
       if (_stopRequested) break;
       _statusCtrl.add(
         QuestStatusUpdate(

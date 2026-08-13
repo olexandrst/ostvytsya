@@ -91,8 +91,36 @@ class Character {
   /// правила + власний промпт персонажа (портовано з
   /// domovyk_quest/prompt.py::build_system_instruction, гілка для персонажа
   /// з вільним system_prompt).
-  String get renderedSystemInstruction =>
-      '$kLanguageRules\n$kPerformanceRules\n${systemPrompt.trim()}';
+  String get renderedSystemInstruction {
+    final speedInstruction = _speedInstruction;
+    final prompt = speedInstruction == null
+        ? systemPrompt.trim()
+        : '${systemPrompt.trim()}\n\n$speedInstruction';
+    return '$kLanguageRules\n$kPerformanceRules\n$prompt';
+  }
+
+  /// Gemini Live API, на відміну від OpenAI Realtime, не має параметра
+  /// швидкості голосу в session-конфігу (лише вибір голосу) — тож для неї
+  /// швидкість доводиться просити текстовою інструкцією. Для OpenAI
+  /// [speechSpeed] застосовується нативно через `audio.output.speed`
+  /// (openai_transport.dart), тож тут вона не потрібна.
+  String? get _speedInstruction {
+    if (provider != 'google') return null;
+    if (speechSpeed <= 0.7) {
+      return 'Говори помітно повільніше й чіткіше, ніж зазвичай, роблячи '
+          'паузи між реченнями.';
+    }
+    if (speechSpeed <= 0.9) {
+      return 'Говори трохи повільніше, ніж зазвичай.';
+    }
+    if (speechSpeed >= 1.3) {
+      return 'Говори помітно швидше й енергійніше, ніж зазвичай.';
+    }
+    if (speechSpeed >= 1.1) {
+      return 'Говори трохи швидше, ніж зазвичай.';
+    }
+    return null;
+  }
 
   /// Кодове слово(а) активації — якщо персонаж ще не має жодного, підстава
   /// розумний типовий варіант (так само, як web/character_forms.py).
