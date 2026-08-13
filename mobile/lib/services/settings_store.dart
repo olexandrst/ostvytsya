@@ -89,11 +89,11 @@ class SettingsStore {
     }
   }
 
-  /// Автозапис кожної сесії квесту в .m4a — вимкнено за замовчуванням
-  /// (експериментальна фіча, займає місце на диску).
+  /// Автозапис кожної сесії квесту в .m4a на зовнішнє сховище — увімкнено
+  /// за замовчуванням, вимикається вручну в налаштуваннях.
   Future<bool> getSessionRecordingEnabled() async {
     final v = await _storage.read(key: _sessionRecordingEnabledName);
-    return v == 'true';
+    return v == null ? true : v == 'true';
   }
 
   Future<void> setSessionRecordingEnabled(bool value) =>

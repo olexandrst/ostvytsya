@@ -152,6 +152,12 @@ class AudioPipeline {
     }
   }
 
+  // Рахунок кожного виклику _onDevicesChanged(), що чекає на "усідання"
+  // щойно з'явленого Bluetooth-виходу — щоб застаріле очікування (пристрій
+  // від'єднався чи змінився ще раз, поки ми чекали) не застосувало вже
+  // неактуальний вибір.
+  int _outputSettleToken = 0;
+
   /// Реакція на під'єднання/від'єднання аудіо-пристрою: переобрати
   /// найкращий доступний БЕЗ переривання сесії. Вихід перемикається на
   /// льоту (AudioTrack.setPreferredDevice не потребує зупинки), вхід
@@ -163,6 +169,19 @@ class AudioPipeline {
     await _resolveAudioDevices();
 
     if (_resolvedOutputDevice?.id != prevOutputId) {
+      final token = ++_outputSettleToken;
+      // Щойно з'явлений Bluetooth-вихід (колонка, автомобільна магнітола)
+      // система показує в списку пристроїв ще ДО того, як фактично
+      // завершилось узгодження аудіо-профілю — прив'язка AudioTrack до
+      // нього в цю мить веде в тишу без жодної помилки. Провідні пристрої
+      // й гарнітури, що вже стабільно під'єднані, такої затримки не мають,
+      // тож чекаємо лише для bluetooth.
+      if (_resolvedOutputDevice != null &&
+          _resolvedOutputDevice!.bucket == 'bluetooth') {
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        if (token != _outputSettleToken || !_opened) return;
+        await _resolveAudioDevices();
+      }
       await _deviceService.setOutputDevice(_resolvedOutputDevice?.id);
     }
     if (_resolvedInputDevice?.id != prevInputId && _recorderRunning) {

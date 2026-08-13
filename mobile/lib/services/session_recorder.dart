@@ -1,10 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:path_provider/path_provider.dart';
-
 import 'native_session_encoder.dart';
+import 'recordings_store.dart';
 
 /// Автоматичний запис однієї спроби квесту (від почутого кодового слова до
 /// перемоги/тайм-ауту/зупинки) в один стиснений .m4a-файл на диску — для
@@ -32,9 +30,7 @@ class SessionRecorder {
   /// Почати новий запис (новий файл). Якщо запис уже йде — нічого не робить.
   Future<void> start() async {
     if (_active) return;
-    final docs = await getApplicationDocumentsDirectory();
-    final sessionsDir = Directory('${docs.path}/sessions');
-    await sessionsDir.create(recursive: true);
+    final sessionsDir = await RecordingsStore.sessionsDirectory();
     final ts = DateTime.now().toIso8601String().replaceAll(
       RegExp(r'[^0-9]'),
       '',

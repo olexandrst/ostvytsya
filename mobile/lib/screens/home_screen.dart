@@ -7,6 +7,7 @@ import '../services/crash_log.dart';
 import '../services/vosk_model_downloader.dart';
 import 'character_edit_screen.dart';
 import 'quest_screen.dart';
+import 'recordings_screen.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -287,6 +288,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Записи сесій',
+            icon: const Icon(Icons.graphic_eq),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const RecordingsScreen()),
+            ),
+          ),
           IconButton(
             tooltip: 'Налаштування',
             icon: const Icon(Icons.settings),
