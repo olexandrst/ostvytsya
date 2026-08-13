@@ -30,18 +30,24 @@ class GeminiTransport implements QuestTransport {
   StreamSubscription? _sub;
   bool _setupComplete = false;
   int _turnAudioBytes = 0;
+  int _turnTextChars = 0;
   int _consecutiveSilentTurns = 0;
 
   static const _maxRecoveryAttempts = 4;
 
   // Gemini 3.1 інколи повертає технічно "непорожній" inlineData-шматок у
   // лічені байти (підтверджено на реальному пристрої — рівно 2 байти,
-  // тобто один PCM16-семпл) замість реальної озвучки репліки. Якщо рахувати
-  // БУДЬ-ЯКИЙ непорожній шматок за "хід озвучено", механізм відновлення
-  // нижче зупиняється на цій "заглушці", а дитина фактично нічого не чує.
-  // Тому за успіх рахуємо лише хід, де сумарно прийшло не менше стількох
-  // байт — це вже не разовий артефакт, а справжня коротка фраза.
-  static const _minMeaningfulAudioBytes = 4800; // ~100мс на 24 кГц PCM16
+  // тобто один PCM16-семпл) замість реальної озвучки репліки, а інколи
+  // озвучує лише ХВІСТ довгої репліки, обірвавши вступ (теж підтверджено
+  // наживо: 600+ символів тексту, але лише ~190мс аудіо — фізично
+  // неможливо для реальної озвучки такого обсягу). Тому "хід озвучено"
+  // рахуємо не за фіксованим мінімумом байт, а відносно ДОВЖИНИ тексту
+  // цього ходу: скільки б часу пішло на озвучку в дуже швидкому темпі
+  // (нижня межа, щоб не ганяти повторні спроби для просто швидкої мови) —
+  // і вимагаємо хоча б частку від цього часу.
+  static const _fastCharsPerSecond = 20; // дуже швидкий темп мовлення
+  static const _minVoicedFraction = 0.3; // ≥30% від "швидкої" тривалості
+  static const _minMeaningfulAudioBytes = 4800; // підлога для короткого тексту, ~100мс
 
   GeminiTransport(this.character, this.apiKey);
 
@@ -155,15 +161,21 @@ class GeminiTransport implements QuestTransport {
   /// Відомий, визнаний самим Google баг якості gemini-3.1-flash-live-preview
   /// (google-gemini/cookbook issue #1197): БУДЬ-ЯКИЙ хід (не лише перше
   /// привітання — підтверджено на реальному пристрої й для звичайних ходів
-  /// посеред квесту) інколи взагалі не озвучується (або озвучується
-  /// мізерною "заглушкою" в кілька байт — теж підтверджено наживо), хоча
-  /// текст приходить повністю. Викликається на кожен turnComplete: якщо за
-  /// весь хід не прийшло досить аудіо ([_minMeaningfulAudioBytes]) —
+  /// посеред квесту) інколи взагалі не озвучується, або озвучується лише
+  /// частково (хвіст репліки без вступу — теж підтверджено наживо), хоча
+  /// текст приходить повністю. Викликається на кожен turnComplete: якщо
+  /// озвученого аудіо явно замало відносно довжини тексту цього ходу —
   /// просимо модель озвучити ту саму репліку ще раз (до
   /// [_maxRecoveryAttempts] спроб поспіль, далі здаємось, щоб не
   /// зациклитись, якщо модель геть не хоче говорити).
   void _onTurnComplete() {
-    if (_turnAudioBytes >= _minMeaningfulAudioBytes) {
+    final expectedBytes =
+        (_turnTextChars / _fastCharsPerSecond) * outputSampleRate * 2;
+    final requiredBytes = (expectedBytes * _minVoicedFraction).clamp(
+      _minMeaningfulAudioBytes,
+      double.infinity,
+    );
+    if (_turnAudioBytes >= requiredBytes) {
       _consecutiveSilentTurns = 0;
     } else if (kGeminiLiveModel.contains('3.1') &&
         _consecutiveSilentTurns < _maxRecoveryAttempts) {
@@ -173,14 +185,15 @@ class GeminiTransport implements QuestTransport {
         'realtime_input': {
           'text':
               '[Службовий сигнал — не читай його вголос і не пиши новий '
-              'текст. Просто озвуч вголос СВОЄЮ останньою реплікою — '
-              'гравець тебе не почув.]',
+              'текст. Просто озвуч вголос ПОВНІСТЮ СВОЄЮ останньою '
+              'реплікою від самого початку — гравець тебе не почув.]',
         },
       });
     } else {
       _consecutiveSilentTurns = 0;
     }
     _turnAudioBytes = 0;
+    _turnTextChars = 0;
   }
 
   void _onMessage(dynamic raw) {
@@ -246,6 +259,7 @@ class GeminiTransport implements QuestTransport {
     if (outputTranscription is Map) {
       final t = outputTranscription['text'];
       if (t is String && t.isNotEmpty) {
+        _turnTextChars += t.length;
         _eventsController.add(
           QuestTransportEvent(QuestEventKind.agentTranscriptDelta, text: t),
         );
