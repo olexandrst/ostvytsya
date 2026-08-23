@@ -31,12 +31,6 @@ class WakeGateService {
   /// а не мовчки "слухати" вічно без жодного результату.
   static const _maxConsecutiveErrors = 50;
 
-  /// Скільки після активації SCO не реагувати на зміни списку пристроїв:
-  /// підняття голосового каналу саме по собі перебудовує цей список
-  /// (гарнітура зникає й повертається вже як SCO-вхід), і без цієї паузи
-  /// автопідбір встигав перестрибнути назад на вбудований мікрофон.
-  static const _scoSettleGuard = Duration(seconds: 5);
-
   final AudioRecorder _recorder = AudioRecorder();
   final AudioDeviceService _deviceService = AudioDeviceService();
   final SettingsStore _settings = SettingsStore();
@@ -104,16 +98,9 @@ class WakeGateService {
     var consecutiveErrors = 0;
     var lastPartial = '';
     var currentDevice = await _resolveInputDevice();
-    var scoActive = false;
-    // Доки SCO піднімається, список аудіо-пристроїв «мигтить» — це наслідок
-    // НАШОЇ ж активації: гарнітура на мить зникає зі списку входів, а потім
-    // повертається вже як SCO-пристрій (кількість входів росте). Доти
-    // ігноруємо зміни пристроїв, інакше автопідбір встигає перестрибнути на
-    // вбудований мікрофон і зірвати щойно початкове встановлення SCO.
-    var scoSettlingUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
     Future<void> startStream() async {
-      var device = currentDevice;
+      final device = currentDevice;
       // Раніше тут не було видно взагалі нічого про вибір мікрофона — при
       // мовчазній тиші неможливо було відрізнити «слухаю не той пристрій»
       // від «розпізнавання не працює».
@@ -122,43 +109,24 @@ class WakeGateService {
             ? 'Слухаю мікрофон за замовчуванням.'
             : 'Слухаю мікрофон «${device.label}».',
       );
-      // Мікрофон Bluetooth-гарнітури мовчить, доки не піднято SCO.
-      if (device != null && device.bucket == 'bluetooth') {
-        if (!scoActive) {
-          scoSettlingUntil = DateTime.now().add(_scoSettleGuard);
-          final ok = await _deviceService.startBluetoothMic(device.id);
-          scoActive = ok;
-          _diagCtrl.add(
-            ok
-                ? 'Bluetooth-мікрофон: вмикаю голосовий канал (SCO)...'
-                : 'Bluetooth-мікрофон: не вдалося увімкнути голосовий канал.',
-          );
-          if (ok) {
-            await Future<void>.delayed(AudioDeviceService.scoSettleDelay);
-            // Коли SCO піднявся, гарнітура зазвичай з'являється у списку
-            // ЗАНОВО — з іншим id. Прив'язка до старого id дала б знову
-            // тишу, тож перечитуємо й беремо актуальний bluetooth-вхід.
-            final refreshed = await _resolveInputDevice();
-            if (refreshed != null && refreshed.bucket == 'bluetooth') {
-              device = refreshed;
-              currentDevice = refreshed;
-              _diagCtrl.add('Bluetooth-мікрофон: готовий («${device.label}»).');
-            }
-            scoSettlingUntil = DateTime.now().add(_scoSettleGuard);
-          }
-        }
-      } else if (scoActive) {
-        await _deviceService.stopBluetoothMic();
-        scoActive = false;
-      }
       final stream = await _recorder.startStream(
         RecordConfig(
           encoder: AudioEncoder.pcm16bits,
           sampleRate: sampleRate,
           numChannels: 1,
-          device: device == null
+          // ‼️ Для Bluetooth НЕ називаємо конкретний пристрій. Плагін
+          // `record` вимикає власне керування SCO, якщо переданий пристрій
+          // має тип, відмінний від TYPE_BLUETOOTH_SCO — а та сама гарнітура
+          // присутня у списку і як BLE/A2DP, тож ми легко передавали «не
+          // ту» її іпостась. У такому разі плагін не просто не піднімає
+          // канал, а РВЕ вже піднятий — і мікрофон гарнітури віддає тишу.
+          // З null плагін сам піднімає SCO, ЧЕКАЄ на підтвердження
+          // з'єднання і лише тоді починає запис, а Android скеровує
+          // захоплення саме з гарнітури.
+          device: (device == null || device.bucket == 'bluetooth')
               ? null
               : InputDevice(id: device.id, label: device.label),
+          androidConfig: const AndroidRecordConfig(manageBluetooth: true),
         ),
       );
       sub = stream.listen((chunk) async {
@@ -203,15 +171,20 @@ class WakeGateService {
       _,
     ) async {
       if (completer.isCompleted) return;
-      // Мигтіння списку, спричинене нашою ж активацією SCO, — не привід
-      // перевибирати мікрофон.
-      if (DateTime.now().isBefore(scoSettlingUntil)) return;
       final newDevice = await _resolveInputDevice();
+      // Поки гарнітура на місці, лишаємось на ній: підняття SCO самим
+      // плагіном перебудовує список входів, і без цієї умови автопідбір
+      // устигав перескочити на вбудований мікрофон. Якщо ж bluetooth зник
+      // зі списку зовсім — гарнітуру справді від'єднали, і перехід на
+      // вбудований мікрофон правильний.
       if (newDevice?.id == currentDevice?.id) return;
-      // Свідомо НЕ «прилипаємо» до гарнітури назавжди: після паузи вище
-      // зникнення bluetooth зі списку означає справжнє від'єднання, і тоді
-      // треба чесно перейти на вбудований мікрофон (startStream сама зніме
-      // SCO). Інакше від'єднана гарнітура залишила б квест глухим.
+      if (currentDevice?.bucket == 'bluetooth' &&
+          newDevice?.bucket != 'bluetooth') {
+        final stillThere = AudioDeviceService.firstBluetooth(
+          await _deviceService.listInputDevices(),
+        );
+        if (stillThere != null) return;
+      }
       currentDevice = newDevice;
       await sub?.cancel();
       try {
@@ -234,9 +207,6 @@ class WakeGateService {
       try {
         await _recorder.stop();
       } catch (_) {}
-      // Далі квест сам підніме SCO, якщо він йому потрібен, — тут маршрут
-      // лишати за собою не можна.
-      await _deviceService.stopBluetoothMic();
     }
   }
 

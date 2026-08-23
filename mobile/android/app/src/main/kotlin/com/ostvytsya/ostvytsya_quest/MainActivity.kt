@@ -171,17 +171,11 @@ class MainActivity : FlutterActivity() {
                                 PersistentFiles.exportFile(applicationContext, name, targetPath)
                         )
                     }
-                    "startBluetoothMic" -> {
-                        val deviceId = call.argument<Int>("deviceId")
-                        result.success(
-                            if (deviceId == null) false
-                            else CommunicationRouter.start(applicationContext, deviceId)
-                        )
-                    }
-                    "stopBluetoothMic" -> {
-                        CommunicationRouter.stop(applicationContext)
-                        result.success(null)
-                    }
+                    // Керування Bluetooth-каналом (SCO) навмисно ПРИБРАНО:
+                    // ним повністю опікується плагін `record`
+                    // (AndroidRecordConfig.manageBluetooth, типово true). Наша
+                    // паралельна реалізація конфліктувала з ним — див.
+                    // коментар у wake_gate.dart.
                     "sessionEncoderStart" -> {
                         // Пишемо у спільну медіатеку (переживає видалення
                         // застосунку), а якщо це не вдалося чи система застара —

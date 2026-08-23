@@ -40,7 +40,6 @@ class AudioPipeline {
   void Function(Uint8List pcm16)? _onMic;
   AudioDevice? _resolvedInputDevice;
   AudioDevice? _resolvedOutputDevice;
-  bool _scoActive = false;
 
   // Плеєр стартує асинхронно (нативний виклик), а перший шматок голосу
   // персонажа може прийти від транспорту раніше, ніж він встигне
@@ -96,9 +95,15 @@ class AudioPipeline {
         encoder: AudioEncoder.pcm16bits,
         sampleRate: _inputSampleRate!,
         numChannels: 1,
-        device: device == null
+        // ‼️ Для Bluetooth пристрій навмисно НЕ називаємо — те саме, що й у
+        // WakeGateService: плагін `record` вимикає (і навіть рве) власне
+        // керування SCO, якщо переданий пристрій має тип, відмінний від
+        // TYPE_BLUETOOTH_SCO, а гарнітура присутня у списку і як BLE/A2DP.
+        // З null він піднімає канал сам і чекає на з'єднання перед записом.
+        device: (device == null || device.bucket == 'bluetooth')
             ? null
             : InputDevice(id: device.id, label: device.label),
+        androidConfig: const AndroidRecordConfig(manageBluetooth: true),
       ),
     );
     _micSub = micStream.listen((data) => _onMic?.call(data));
@@ -186,43 +191,10 @@ class AudioPipeline {
       await _deviceService.setOutputDevice(_resolvedOutputDevice?.id);
     }
     if (_resolvedInputDevice?.id != prevInputId) {
-      // Вхід змінився — переузгоджуємо маршрут SCO. _applyBluetoothMicRouting
-      // сама вирішує, що робити, і НЕ смикає вже піднятий канал: інакше
-      // кожна зміна списку пристроїв (яку, зокрема, спричиняє й саме
-      // підняття SCO) знімала б і знову піднімала голосовий канал.
-      await _applyBluetoothMicRouting();
       if (_recorderRunning) {
         await _queueMicOp(_stopRecorderStream);
         await _queueMicOp(_startRecorderStream);
       }
-    }
-  }
-
-  /// Підняти голосовий канал (SCO) для Bluetooth-мікрофона — інакше він
-  /// віддає суцільну тишу. Робимо це ОДИН раз на квест, а не при кожному
-  /// перезапуску мікрофона: у напівдуплексі мікрофон вмикається/вимикається
-  /// після кожної репліки персонажа, і смикати SCO щоразу означало б
-  /// секундну затримку й клацання на кожному ході.
-  Future<void> _applyBluetoothMicRouting() async {
-    final device = _resolvedInputDevice;
-    if (device == null || device.bucket != 'bluetooth') {
-      await _deviceService.stopBluetoothMic();
-      _scoActive = false;
-      return;
-    }
-    if (_scoActive) return;
-    final ok = await _deviceService.startBluetoothMic(device.id);
-    _scoActive = ok;
-    _diagCtrl.add(
-      ok
-          ? 'Bluetooth-мікрофон: голосовий канал (SCO) увімкнено.'
-          : 'Bluetooth-мікрофон: не вдалося увімкнути голосовий канал.',
-    );
-    if (ok) {
-      await Future<void>.delayed(AudioDeviceService.scoSettleDelay);
-      // Після підняття SCO гарнітура зазвичай з'являється у списку заново,
-      // з іншим id — мікрофон треба відкривати вже на актуальному.
-      await _resolveAudioDevices();
     }
   }
 
@@ -262,7 +234,6 @@ class AudioPipeline {
     _onMic = onMic;
 
     await _resolveAudioDevices();
-    await _applyBluetoothMicRouting();
     await _deviceChangeSub?.cancel();
     _deviceChangeSub = AudioDeviceService.onDevicesChanged.listen((_) {
       unawaited(_onDevicesChanged());
@@ -363,10 +334,6 @@ class AudioPipeline {
     _deviceChangeSub = null;
     await _queueMicOp(_stopRecorderStream);
     await _player.stop();
-    if (_scoActive) {
-      await _deviceService.stopBluetoothMic();
-      _scoActive = false;
-    }
     _muted = false;
   }
 
