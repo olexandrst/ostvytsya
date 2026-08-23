@@ -13,9 +13,16 @@ class NativePcmPlayer {
     'com.ostvytsya.ostvytsya_quest/foreground',
   );
 
-  Future<void> start(int sampleRate) async {
+  /// [voiceCommunication] — відтворювати як голос розмови (канал SCO), а не
+  /// як медіа. Потрібно для Bluetooth-гарнітури: поки піднято SCO заради її
+  /// мікрофона, профіль A2DP призупинено, і медіа-потік у гарнітуру не
+  /// потрапляє взагалі.
+  Future<void> start(int sampleRate, {bool voiceCommunication = false}) async {
     try {
-      await _channel.invokeMethod('pcmPlayerStart', {'sampleRate': sampleRate});
+      await _channel.invokeMethod('pcmPlayerStart', {
+        'sampleRate': sampleRate,
+        'voiceCommunication': voiceCommunication,
+      });
     } on PlatformException {
       // Плеєр міг не піднятися — шматки просто нікуди не підуть, без краху.
     }

@@ -28,7 +28,20 @@ class PcmAudioPlayer {
     private var handler: Handler? = null
     private var audioTrack: AudioTrack? = null
 
-    fun start(sampleRate: Int) {
+    /**
+     * [voiceCommunication] — відтворювати як голос розмови, а не як медіа.
+     *
+     * Це принципово для Bluetooth-ГАРНІТУРИ: щойно піднято SCO (а його
+     * піднімає плагін `record` заради мікрофона гарнітури), профіль A2DP
+     * призупиняється, і потік із USAGE_MEDIA у гарнітуру просто не
+     * потрапляє — тиша без жодної помилки. Голос розмови
+     * (USAGE_VOICE_COMMUNICATION) іде саме тим самим каналом SCO, що й
+     * мікрофон, тож персонажа чути.
+     *
+     * Для звичайної Bluetooth-КОЛОНКИ (A2DP, без мікрофона) SCO не
+     * піднімається взагалі — там лишається USAGE_MEDIA і повноцінна якість.
+     */
+    fun start(sampleRate: Int, voiceCommunication: Boolean = false) {
         stop()
         val t = HandlerThread("PcmAudioPlayer").apply { start() }
         thread = t
@@ -44,7 +57,10 @@ class PcmAudioPlayer {
                 val bufSize = if (minBuf > 0) minBuf * 2 else sampleRate * 2
                 val track = AudioTrack(
                     AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setUsage(
+                            if (voiceCommunication) AudioAttributes.USAGE_VOICE_COMMUNICATION
+                            else AudioAttributes.USAGE_MEDIA
+                        )
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build(),
                     AudioFormat.Builder()

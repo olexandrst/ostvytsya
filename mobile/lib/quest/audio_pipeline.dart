@@ -40,6 +40,24 @@ class AudioPipeline {
   void Function(Uint8List pcm16)? _onMic;
   AudioDevice? _resolvedInputDevice;
   AudioDevice? _resolvedOutputDevice;
+  bool _voicePlayback = false;
+  int? _outputSampleRate;
+
+  /// Прив'язати вихід до обраного пристрою.
+  ///
+  /// Коли грає канал розмови (SCO), пристрій НЕ називаємо: та сама
+  /// гарнітура присутня у списку виходів і як A2DP, а A2DP на час SCO
+  /// призупинено — прив'язка до нього дала б тишу. Маршрутизацію в цьому
+  /// режимі система робить сама, за активним пристроєм розмови.
+  Future<void> _applyOutputRouting() async {
+    if (_voicePlayback) {
+      await _deviceService.setOutputDevice(null);
+      return;
+    }
+    if (_resolvedOutputDevice != null) {
+      await _deviceService.setOutputDevice(_resolvedOutputDevice!.id);
+    }
+  }
 
   // Плеєр стартує асинхронно (нативний виклик), а перший шматок голосу
   // персонажа може прийти від транспорту раніше, ніж він встигне
@@ -188,7 +206,23 @@ class AudioPipeline {
         if (token != _outputSettleToken || !_opened) return;
         await _resolveAudioDevices();
       }
-      await _deviceService.setOutputDevice(_resolvedOutputDevice?.id);
+      await _applyOutputRouting();
+    }
+    // Гарнітуру під'єднали (чи від'єднали) посеред квесту — режим
+    // відтворення треба переузгодити: канал розмови для гарнітури, медіа
+    // для всього іншого. Без цього голос персонажа лишився б у «не тому»
+    // каналі й пропав би.
+    final wantVoice = _resolvedInputDevice?.bucket == 'bluetooth';
+    if (wantVoice != _voicePlayback && _playerReady && _outputSampleRate != null) {
+      _voicePlayback = wantVoice;
+      await _player.stop();
+      await _player.start(_outputSampleRate!, voiceCommunication: wantVoice);
+      await _applyOutputRouting();
+      _diagCtrl.add(
+        wantVoice
+            ? 'Голос персонажа: перемикаю на канал розмови (Bluetooth-гарнітура).'
+            : 'Голос персонажа: повертаю звичайне медіа-відтворення.',
+      );
     }
     if (_resolvedInputDevice?.id != prevInputId) {
       if (_recorderRunning) {
@@ -239,10 +273,19 @@ class AudioPipeline {
       unawaited(_onDevicesChanged());
     });
 
-    await _player.start(outputSampleRate);
-    if (_resolvedOutputDevice != null) {
-      await _deviceService.setOutputDevice(_resolvedOutputDevice!.id);
+    // Гарнітура (мікрофон по bluetooth) означає, що зараз піднято SCO — і
+    // голос персонажа має йти тим самим каналом розмови, інакше в гарнітуру
+    // не потрапить нічого. Для колонки без мікрофона лишається звичайне
+    // медіа-відтворення з повною якістю.
+    _outputSampleRate = outputSampleRate;
+    _voicePlayback = _resolvedInputDevice?.bucket == 'bluetooth';
+    await _player.start(outputSampleRate, voiceCommunication: _voicePlayback);
+    if (_voicePlayback) {
+      _diagCtrl.add(
+        'Голос персонажа: канал розмови (через Bluetooth-гарнітуру).',
+      );
     }
+    await _applyOutputRouting();
 
     _playerReady = true;
     final pending = List<(Uint8List, int)>.from(_pendingChunks);

@@ -108,7 +108,8 @@ class MainActivity : FlutterActivity() {
                     }
                     "pcmPlayerStart" -> {
                         val sampleRate = (call.argument<Int>("sampleRate")) ?: 24000
-                        pcmPlayer.start(sampleRate)
+                        val voice = call.argument<Boolean>("voiceCommunication") ?: false
+                        pcmPlayer.start(sampleRate, voice)
                         result.success(null)
                     }
                     "pcmPlayerWrite" -> {
