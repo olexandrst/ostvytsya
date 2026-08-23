@@ -186,12 +186,10 @@ class AudioPipeline {
       await _deviceService.setOutputDevice(_resolvedOutputDevice?.id);
     }
     if (_resolvedInputDevice?.id != prevInputId) {
-      // Вхід змінився — маршрут SCO треба переузгодити (підняти для щойно
-      // під'єднаної гарнітури або зняти, якщо її від'єднали).
-      if (_scoActive) {
-        await _deviceService.stopBluetoothMic();
-        _scoActive = false;
-      }
+      // Вхід змінився — переузгоджуємо маршрут SCO. _applyBluetoothMicRouting
+      // сама вирішує, що робити, і НЕ смикає вже піднятий канал: інакше
+      // кожна зміна списку пристроїв (яку, зокрема, спричиняє й саме
+      // підняття SCO) знімала б і знову піднімала голосовий канал.
       await _applyBluetoothMicRouting();
       if (_recorderRunning) {
         await _queueMicOp(_stopRecorderStream);
@@ -220,7 +218,12 @@ class AudioPipeline {
           ? 'Bluetooth-мікрофон: голосовий канал (SCO) увімкнено.'
           : 'Bluetooth-мікрофон: не вдалося увімкнути голосовий канал.',
     );
-    if (ok) await Future<void>.delayed(AudioDeviceService.scoSettleDelay);
+    if (ok) {
+      await Future<void>.delayed(AudioDeviceService.scoSettleDelay);
+      // Після підняття SCO гарнітура зазвичай з'являється у списку заново,
+      // з іншим id — мікрофон треба відкривати вже на актуальному.
+      await _resolveAudioDevices();
+    }
   }
 
   Future<void> _stopRecorderStream() async {
