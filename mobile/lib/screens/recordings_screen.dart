@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../services/recordings_store.dart';
@@ -66,13 +67,16 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
   }
 
   Future<void> _load() async {
+    // Без цього дозволу система віддає лише записи, створені ПОТОЧНИМ
+    // встановленням застосунку — історія від попередніх версій (заради якої
+    // записи й перенесено у спільну медіатеку) була б невидимою.
+    await Permission.audio.request();
     final list = await _store.list();
     if (mounted) setState(() => _entries = list);
   }
 
   Future<void> _togglePlay(RecordingEntry entry) async {
-    final path = entry.file.path;
-    if (_playingPath == path) {
+    if (_playingPath == entry.id) {
       if (_isPlaying) {
         await _player.pause();
       } else {
@@ -80,8 +84,20 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
       }
       return;
     }
+    // Для записів у медіатеці це копія в кеші (робиться один раз) — див.
+    // RecordingsStore.localFilePath.
+    final path = await _store.localFilePath(entry);
+    if (path == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не вдалося відкрити запис')),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
     setState(() {
-      _playingPath = path;
+      _playingPath = entry.id;
       _position = Duration.zero;
       _duration = Duration.zero;
     });
@@ -89,9 +105,16 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
   }
 
   Future<void> _share(RecordingEntry entry) async {
-    await SharePlus.instance.share(
-      ShareParams(files: [XFile(entry.file.path)]),
-    );
+    final path = await _store.localFilePath(entry);
+    if (path == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не вдалося підготувати файл')),
+        );
+      }
+      return;
+    }
+    await SharePlus.instance.share(ShareParams(files: [XFile(path)]));
   }
 
   String _formatDate(DateTime dt) {
@@ -130,8 +153,7 @@ class _RecordingsScreenState extends State<RecordingsScreen> {
                 itemCount: entries.length,
                 itemBuilder: (context, i) {
                   final e = entries[i];
-                  final path = e.file.path;
-                  final isCurrent = _playingPath == path;
+                  final isCurrent = _playingPath == e.id;
                   final playing = isCurrent && _isPlaying;
                   return Column(
                     children: [

@@ -12,14 +12,26 @@ class NativeSessionEncoder {
     'com.ostvytsya.ostvytsya_quest/foreground',
   );
 
-  Future<void> start(String path, int sampleRate) async {
+  /// Почати запис. [name] — ім'я файлу у спільній медіатеці
+  /// (`Music/Оствиця`), [fallbackPath] — куди писати, якщо медіатека
+  /// недоступна (Android 9 і старіші).
+  ///
+  /// Повертає `content://`-URI створеного запису в медіатеці, або null, якщо
+  /// довелось відкотитись на файл за [fallbackPath].
+  Future<String?> start(
+    String name,
+    String fallbackPath,
+    int sampleRate,
+  ) async {
     try {
-      await _channel.invokeMethod('sessionEncoderStart', {
-        'path': path,
+      return await _channel.invokeMethod<String>('sessionEncoderStart', {
+        'name': name,
+        'fallbackPath': fallbackPath,
         'sampleRate': sampleRate,
       });
     } on PlatformException {
       // Кодер міг не піднятися — шматки просто нікуди не підуть, без краху.
+      return null;
     }
   }
 

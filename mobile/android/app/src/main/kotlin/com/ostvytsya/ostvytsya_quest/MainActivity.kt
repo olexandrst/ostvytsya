@@ -34,6 +34,9 @@ class MainActivity : FlutterActivity() {
     private val TAG = "MainActivity"
     private val pcmPlayer = PcmAudioPlayer()
     private val sessionEncoder = SessionAacEncoder()
+    // Запис у медіатеці, який зараз пишеться (IS_PENDING=1) — знімаємо
+    // позначку після завершення кодування.
+    private var pendingRecordingUri: Uri? = null
     private var audioDeviceCallback: AudioDeviceCallback? = null
     private var audioDeviceEventSink: EventChannel.EventSink? = null
 
@@ -127,10 +130,28 @@ class MainActivity : FlutterActivity() {
                         result.success(AudioDeviceUtils.listDevices(applicationContext, direction))
                     }
                     "sessionEncoderStart" -> {
-                        val path = call.argument<String>("path")
+                        // Пишемо у спільну медіатеку (переживає видалення
+                        // застосунку), а якщо це не вдалося чи система застара —
+                        // відкочуємось на файл у теці застосунку, як раніше.
                         val sampleRate = call.argument<Int>("sampleRate") ?: 24000
-                        if (path != null) sessionEncoder.start(path, sampleRate)
-                        result.success(null)
+                        val name = call.argument<String>("name")
+                        val fallbackPath = call.argument<String>("fallbackPath")
+                        val created = if (name != null) {
+                            SessionRecordingsStore.create(applicationContext, name)
+                        } else {
+                            null
+                        }
+                        if (created != null) {
+                            pendingRecordingUri = created.first
+                            sessionEncoder.start(created.second, sampleRate)
+                            result.success(created.first.toString())
+                        } else if (fallbackPath != null) {
+                            pendingRecordingUri = null
+                            sessionEncoder.start(fallbackPath, sampleRate)
+                            result.success(null)
+                        } else {
+                            result.success(null)
+                        }
                     }
                     "sessionEncoderWrite" -> {
                         val bytes = call.argument<ByteArray>("bytes")
@@ -139,8 +160,28 @@ class MainActivity : FlutterActivity() {
                     }
                     "sessionEncoderStop" -> {
                         sessionEncoder.stop {
+                            // Знімаємо IS_PENDING лише коли файл уже повністю
+                            // дописано й закрито — інакше в медіатеці з'явиться
+                            // обрізаний, непридатний до відтворення запис.
+                            pendingRecordingUri?.let {
+                                SessionRecordingsStore.markComplete(applicationContext, it)
+                            }
+                            pendingRecordingUri = null
                             runOnUiThread { result.success(null) }
                         }
+                    }
+                    "listSessionRecordings" -> {
+                        result.success(SessionRecordingsStore.list(applicationContext))
+                    }
+                    "copyRecordingToCache" -> {
+                        val uri = call.argument<String>("uri")
+                        val name = call.argument<String>("name") ?: "quest.m4a"
+                        result.success(
+                            if (uri == null) null
+                            else SessionRecordingsStore.copyToCache(
+                                applicationContext, Uri.parse(uri), name
+                            )
+                        )
                     }
                     else -> result.notImplemented()
                 }

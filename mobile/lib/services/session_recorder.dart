@@ -29,6 +29,8 @@ class SessionRecorder {
   int _samplesWritten = 0;
   int _micSamplesWritten = 0;
   int _agentSamplesWritten = 0;
+  int _micPeak = 0;
+  String? _lastError;
   final _stopwatch = Stopwatch();
   bool _active = false;
   Future<void> _writeChain = Future<void>.value();
@@ -43,20 +45,36 @@ class SessionRecorder {
   double get lastMicSeconds => _micSamplesWritten / _targetRate;
   double get lastAgentSeconds => _agentSamplesWritten / _targetRate;
 
+  /// Найгучніший семпл мікрофону за сесію, 0..1. Відрізняє «мікрофон узагалі
+  /// не писався» (секунди = 0) від «писався, але прийшла сама тиша»
+  /// (секунди > 0, а пік ≈ 0) — це принципово різні несправності.
+  double get lastMicPeak => _micPeak / 32767;
+
+  /// Перша помилка запису за сесію (раніше будь-який виняток гасився мовчки
+  /// і несправність була невидимою).
+  String? get lastError => _lastError;
+
   /// Почати новий запис (новий файл). Якщо запис уже йде — нічого не робить.
+  ///
+  /// Запис іде у спільну медіатеку пристрою (`Music/Оствиця`), щоб пережити
+  /// видалення застосунку; якщо система застара для MediaStore — у теку
+  /// застосунку, як раніше.
   Future<void> start() async {
     if (_active) return;
-    final sessionsDir = await RecordingsStore.sessionsDirectory();
+    final legacyDir = await RecordingsStore.legacyDirectory();
     final ts = DateTime.now().toIso8601String().replaceAll(
       RegExp(r'[^0-9]'),
       '',
     );
-    final path = '${sessionsDir.path}/quest_$ts.m4a';
-    await _encoder.start(path, _targetRate);
-    _path = path;
+    final name = 'quest_$ts.m4a';
+    final fallbackPath = '${legacyDir.path}/$name';
+    final uri = await _encoder.start(name, fallbackPath, _targetRate);
+    _path = uri ?? fallbackPath;
     _samplesWritten = 0;
     _micSamplesWritten = 0;
     _agentSamplesWritten = 0;
+    _micPeak = 0;
+    _lastError = null;
     _writeChain = Future<void>.value();
     _stopwatch
       ..reset()
@@ -75,9 +93,15 @@ class SessionRecorder {
   Future<void> writeAgent(Uint8List pcm16, int sourceRate) =>
       _enqueue(() => _writeChunk(pcm16, sourceRate, mic: false));
 
+  /// Помилку запису НЕ гасимо мовчки (як було раніше) — запам'ятовуємо першу
+  /// й показуємо в транскрипті квесту. Саме мовчазне гасіння приховувало те,
+  /// що кожен мікрофонний шматок падав із винятком, а запис при цьому
+  /// виглядав справним.
   Future<void> _enqueue(Future<void> Function() op) {
-    final next = _writeChain.then((_) => op());
-    _writeChain = next.catchError((_) {});
+    final next = _writeChain.then((_) => op()).catchError((Object e) {
+      _lastError ??= '$e';
+    });
+    _writeChain = next;
     return next;
   }
 
@@ -101,17 +125,55 @@ class SessionRecorder {
     }
   }
 
-  /// Просте цифрове підсилення з захистом від кліпінгу (насичення на межах
-  /// Int16, без переповнення).
-  Uint8List _applyGain(Uint8List pcm16, double gain) {
-    final samples = pcm16.length ~/ 2;
-    if (samples == 0) return pcm16;
-    final src = pcm16.buffer.asInt16List(pcm16.offsetInBytes, samples);
-    final out = Int16List(samples);
-    for (var i = 0; i < samples; i++) {
-      out[i] = (src[i] * gain).round().clamp(-32768, 32767);
+  /// Прочитати PCM16 із буфера БЕЗ вимоги до вирівнювання.
+  ///
+  /// ‼️ Навмисно НЕ `pcm16.buffer.asInt16List(pcm16.offsetInBytes, n)`: той
+  /// виклик КИДАЄ ArgumentError, якщо зсув у буфері не кратний 2. А шматки
+  /// мікрофону приходять із плагіна `record` через EventChannel як ВИГЛЯД
+  /// (view) на спільний буфер повідомлення — із довільним зсувом, який
+  /// цілком може бути непарним. Саме через це голос дитини мовчки зникав
+  /// із запису: підсилення й ресемплінг — ЄДИНИЙ шлях, яким іде мікрофон
+  /// (16 кГц ≠ 24 кГц), і обидва падали на цьому виклику, а виняток гасився
+  /// в _enqueue. Голос персонажа (24 кГц = цільова частота) обминав і
+  /// підсилення, і ресемплінг, тож писався справно — звідси й асиметрія
+  /// «персонажа чути, дитину ні».
+  ///
+  /// ByteData.getInt16 читає побайтово з явним порядком байтів, тож працює
+  /// за будь-якого зсуву.
+  Int16List _readSamples(Uint8List pcm16) {
+    final n = pcm16.length ~/ 2;
+    final view = ByteData.sublistView(pcm16);
+    final out = Int16List(n);
+    for (var i = 0; i < n; i++) {
+      out[i] = view.getInt16(i * 2, Endian.little);
     }
-    return out.buffer.asUint8List();
+    return out;
+  }
+
+  /// Зворотне перетворення — так само без припущень про вирівнювання й із
+  /// явним порядком байтів (little-endian, як і весь PCM16 у цьому проєкті).
+  Uint8List _writeSamples(Int16List samples) {
+    final out = Uint8List(samples.length * 2);
+    final view = ByteData.sublistView(out);
+    for (var i = 0; i < samples.length; i++) {
+      view.setInt16(i * 2, samples[i], Endian.little);
+    }
+    return out;
+  }
+
+  /// Просте цифрове підсилення з захистом від кліпінгу (насичення на межах
+  /// Int16, без переповнення). Заразом запам'ятовує пік сигналу — для
+  /// діагностики «мікрофон пише саму тишу».
+  Uint8List _applyGain(Uint8List pcm16, double gain) {
+    final samples = _readSamples(pcm16);
+    if (samples.isEmpty) return pcm16;
+    for (var i = 0; i < samples.length; i++) {
+      final raw = samples[i];
+      final peak = raw < 0 ? -raw : raw;
+      if (peak > _micPeak) _micPeak = peak;
+      samples[i] = (raw * gain).round().clamp(-32768, 32767);
+    }
+    return _writeSamples(samples);
   }
 
   /// Заповнити тишею розрив між тим, скільки семплів реально записано, і
@@ -130,9 +192,9 @@ class SessionRecorder {
   /// Лінійна інтерполяція — якості достатньо для архівного запису розмови,
   /// не для продакшн-обробки звуку.
   Uint8List _resample(Uint8List pcm16, int fromRate, int toRate) {
-    final srcSamples = pcm16.length ~/ 2;
+    final data = _readSamples(pcm16);
+    final srcSamples = data.length;
     if (srcSamples == 0) return pcm16;
-    final data = pcm16.buffer.asInt16List(pcm16.offsetInBytes, srcSamples);
     final dstSamples = (srcSamples * toRate / fromRate).round();
     final out = Int16List(dstSamples);
     for (var i = 0; i < dstSamples; i++) {
@@ -141,9 +203,9 @@ class SessionRecorder {
       final frac = srcPos - idx;
       final s0 = data[idx];
       final s1 = data[(idx + 1).clamp(0, srcSamples - 1)];
-      out[i] = (s0 + (s1 - s0) * frac).round();
+      out[i] = (s0 + (s1 - s0) * frac).round().clamp(-32768, 32767);
     }
-    return out.buffer.asUint8List();
+    return _writeSamples(out);
   }
 
   /// Завершити й зберегти поточний запис на диск. Після цього готовий до

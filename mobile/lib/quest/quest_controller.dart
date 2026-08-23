@@ -136,11 +136,15 @@ class QuestController {
         // потрапили б у цю діагностику.
         final micS = _recorder.lastMicSeconds.toStringAsFixed(1);
         final agentS = _recorder.lastAgentSeconds.toStringAsFixed(1);
+        final peak = (_recorder.lastMicPeak * 100).toStringAsFixed(0);
+        final err = _recorder.lastError;
         _transcriptCtrl.add(
           TranscriptLine(
             'system',
             // ignore: unnecessary_brace_in_string_interps
-            'Запис: голос дитини ${micS}с, голос персонажа ${agentS}с.',
+            'Запис: голос дитини ${micS}с (гучність $peak%), '
+            // ignore: unnecessary_brace_in_string_interps
+            'голос персонажа ${agentS}с.${err == null ? '' : ' Помилка: $err'}',
           ),
         );
       }

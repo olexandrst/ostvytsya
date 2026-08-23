@@ -13,6 +13,16 @@
          автопідбір аудіо-пристрою просто не бачив би їх у списку. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!-- Записи квестів лежать у спільній медіатеці (Music/Оствиця), щоб
+         переживати видалення застосунку. На ЗАПИС власних файлів дозвіл не
+         потрібен; ці дозволи потрібні лише щоб ПОКАЗАТИ в історії записи,
+         створені ПОПЕРЕДНІМ встановленням застосунку (після перевстановлення
+         вони вже "чужі"). READ_EXTERNAL_STORAGE на Android 12 і нижче,
+         READ_MEDIA_AUDIO — на 13+. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
     <application
         android:label="ostvytsya_quest"
         android:name=".OstvytsyaApplication"

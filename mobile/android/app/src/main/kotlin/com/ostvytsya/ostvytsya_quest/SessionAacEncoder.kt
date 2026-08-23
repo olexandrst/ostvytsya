@@ -4,8 +4,10 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.nio.ByteBuffer
 
@@ -33,8 +35,37 @@ class SessionAacEncoder {
     private var sampleRate = 24000
     private var totalPresentationTimeUs = 0L
     private val bufferInfo = MediaCodec.BufferInfo()
+    // Тримаємо дескриптор відкритим на весь час запису й закриваємо разом із
+    // мультиплексором — інакше файл у медіатеці лишиться обрізаним.
+    private var outputPfd: ParcelFileDescriptor? = null
 
-    fun start(path: String, sampleRate: Int) {
+    /**
+     * Писати у звичайний файл за шляхом (стара поведінка, Android 9 і нижче).
+     */
+    fun start(path: String, sampleRate: Int) = startInternal(sampleRate) {
+        MediaMuxer(path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+    }
+
+    /**
+     * Писати у вже відкритий дескриптор — так пишемо в спільну медіатеку
+     * (MediaStore), звідки записи не зникають при видаленні застосунку.
+     */
+    fun start(pfd: ParcelFileDescriptor, sampleRate: Int) {
+        outputPfd = pfd
+        startInternal(sampleRate) {
+            // MediaMuxer із дескриптора — з Android 8. Практично недосяжна
+            // гілка (дескриптор дає лише MediaStore, а це вже Android 10+),
+            // але перевірка потрібна явно: без неї лінт NewApi завалить
+            // release-збірку.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                MediaMuxer(pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            } else {
+                throw UnsupportedOperationException("Потрібен Android 8+")
+            }
+        }
+    }
+
+    private fun startInternal(sampleRate: Int, makeMuxer: () -> MediaMuxer) {
         val t = HandlerThread("SessionAacEncoder").apply { start() }
         thread = t
         val h = Handler(t.looper)
@@ -52,7 +83,7 @@ class SessionAacEncoder {
                 enc.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 enc.start()
                 codec = enc
-                muxer = MediaMuxer(path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                muxer = makeMuxer()
             } catch (err: Throwable) {
                 Log.e(TAG, "Не вдалося запустити AAC-кодер", err)
                 codec = null
@@ -183,6 +214,14 @@ class SessionAacEncoder {
         } catch (err: Throwable) {
             Log.e(TAG, "Помилка звільнення мультиплексора", err)
         }
+        // Лише ПІСЛЯ release() мультиплексора — доти він ще дописує в цей
+        // дескриптор, і передчасне закриття обрізало б файл.
+        try {
+            outputPfd?.close()
+        } catch (err: Throwable) {
+            Log.e(TAG, "Помилка закриття дескриптора запису", err)
+        }
+        outputPfd = null
         codec = null
         muxer = null
     }
