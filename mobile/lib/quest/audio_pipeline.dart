@@ -49,14 +49,47 @@ class AudioPipeline {
   /// гарнітура присутня у списку виходів і як A2DP, а A2DP на час SCO
   /// призупинено — прив'язка до нього дала б тишу. Маршрутизацію в цьому
   /// режимі система робить сама, за активним пристроєм розмови.
+  /// Узгодити голосовий канал гарнітури (SCO) з обраним ВХОДОМ.
+  ///
+  /// Один господар каналу на весь квест: піднімаємо, коли мікрофон —
+  /// Bluetooth-гарнітура, і знімаємо, коли ні. Від цього ж стану залежить
+  /// режим відтворення: поки SCO піднято, профіль A2DP призупинено, і в
+  /// гарнітуру проходить лише голос розмови, а не медіа.
+  ///
+  /// Повертає true, якщо режим відтворення змінився.
+  Future<bool> _syncSco() async {
+    final wantVoice = _resolvedInputDevice?.bucket == 'bluetooth';
+    if (wantVoice == _voicePlayback) return false;
+    // Порівнюємо стан ДО і ПІСЛЯ: якщо канал підняти не вдалося, режим
+    // фактично не змінився, і перестворювати плеєр не треба — інакше кожна
+    // наступна зміна списку пристроїв смикала б його заново.
+    final before = _voicePlayback;
+    if (wantVoice) {
+      final ok = await _deviceService.startSco();
+      _voicePlayback = ok;
+      _diagCtrl.add(
+        ok
+            ? 'Bluetooth-гарнітура: голосовий канал увімкнено.'
+            : 'Bluetooth-гарнітура: не вдалося увімкнути голосовий канал.',
+      );
+      if (ok) await Future<void>.delayed(AudioDeviceService.scoSettleDelay);
+    } else {
+      await _deviceService.stopSco();
+      _voicePlayback = false;
+      _diagCtrl.add('Bluetooth-гарнітура: голосовий канал вимкнено.');
+    }
+    return _voicePlayback != before;
+  }
+
   Future<void> _applyOutputRouting() async {
-    if (_voicePlayback) {
-      await _deviceService.setOutputDevice(null);
-      return;
-    }
-    if (_resolvedOutputDevice != null) {
-      await _deviceService.setOutputDevice(_resolvedOutputDevice!.id);
-    }
+    // null тут — це не «нічого не робити», а «зняти прив'язку»: система
+    // сама обере пристрій. Раніше при _resolvedOutputDevice == null ми не
+    // робили НІЧОГО, і на плеєрі лишалась прив'язка до попереднього
+    // пристрою — напр. до вже від'єднаної (чи призупиненої на час SCO)
+    // гарнітури. Звук у такому разі йшов «у нікуди».
+    await _deviceService.setOutputDevice(
+      _voicePlayback ? null : _resolvedOutputDevice?.id,
+    );
   }
 
   // Плеєр стартує асинхронно (нативний виклик), а перший шматок голосу
@@ -113,15 +146,22 @@ class AudioPipeline {
         encoder: AudioEncoder.pcm16bits,
         sampleRate: _inputSampleRate!,
         numChannels: 1,
-        // ‼️ Для Bluetooth пристрій навмисно НЕ називаємо — те саме, що й у
-        // WakeGateService: плагін `record` вимикає (і навіть рве) власне
-        // керування SCO, якщо переданий пристрій має тип, відмінний від
-        // TYPE_BLUETOOTH_SCO, а гарнітура присутня у списку і як BLE/A2DP.
-        // З null він піднімає канал сам і чекає на з'єднання перед записом.
+        // Для Bluetooth пристрій навмисно НЕ називаємо: гарнітура присутня
+        // у списку в кількох іпостасях (SCO/BLE/A2DP), і вказівка «не тієї»
+        // збиває маршрутизацію. Канал уже піднято нами, тож захоплення й
+        // так іде з гарнітури.
         device: (device == null || device.bucket == 'bluetooth')
             ? null
             : InputDevice(id: device.id, label: device.label),
-        androidConfig: const AndroidRecordConfig(manageBluetooth: true),
+        // manageBluetooth: false — канал тримаємо МИ, на весь квест. Інакше
+        // плагін піднімав би його лише на час запису, а в напівдуплексі
+        // мікрофон вимкнено саме тоді, коли говорить персонаж.
+        androidConfig: AndroidRecordConfig(
+          manageBluetooth: false,
+          audioSource: _voicePlayback
+              ? AndroidAudioSource.voiceCommunication
+              : AndroidAudioSource.defaultSource,
+        ),
       ),
     );
     _micSub = micStream.listen((data) => _onMic?.call(data));
@@ -219,9 +259,8 @@ class AudioPipeline {
     // Гарнітуру під'єднали (чи від'єднали) посеред квесту — режим
     // відтворення треба переузгодити: канал розмови для гарнітури, медіа
     // для всього іншого.
-    final wantVoice = _resolvedInputDevice?.bucket == 'bluetooth';
-    if (wantVoice != _voicePlayback) {
-      await _restartPlayer(wantVoice);
+    if (await _syncSco()) {
+      await _restartPlayer(_voicePlayback);
     }
     if (_resolvedInputDevice?.id != prevInputId) {
       if (_recorderRunning) {
@@ -303,7 +342,9 @@ class AudioPipeline {
     // не потрапить нічого. Для колонки без мікрофона лишається звичайне
     // медіа-відтворення з повною якістю.
     _outputSampleRate = outputSampleRate;
-    _voicePlayback = _resolvedInputDevice?.bucket == 'bluetooth';
+    // Канал піднімаємо ДО створення плеєра: від нього залежить, у якому
+    // режимі створювати AudioTrack.
+    await _syncSco();
     await _player.start(outputSampleRate, voiceCommunication: _voicePlayback);
     if (_voicePlayback) {
       _diagCtrl.add(
@@ -402,6 +443,8 @@ class AudioPipeline {
     _deviceChangeSub = null;
     await _queueMicOp(_stopRecorderStream);
     await _player.stop();
+    await _deviceService.stopSco();
+    _voicePlayback = false;
     _muted = false;
   }
 

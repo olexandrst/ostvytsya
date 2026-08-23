@@ -84,6 +84,33 @@ class AudioDeviceService {
     }
   }
 
+  /// Підняти голосовий канал Bluetooth-гарнітури (SCO) на час усього
+  /// квесту. Повертає true, якщо канал справді перемкнено.
+  ///
+  /// Тримати канал мусимо МИ, а не плагін `record`: він піднімає SCO лише
+  /// на старті запису, а в напівдуплексі мікрофон вимкнено саме тоді, коли
+  /// говорить персонаж. Тоді стан каналу й режим відтворення розходяться —
+  /// і голос персонажа зникає (див. CommunicationRouter.kt).
+  Future<bool> startSco() async {
+    try {
+      final ok = await _channel.invokeMethod<bool>('scoStart');
+      return ok ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  Future<void> stopSco() async {
+    try {
+      await _channel.invokeMethod('scoStop');
+    } on PlatformException {
+      // Канал і не піднімався — нема чого знімати.
+    }
+  }
+
+  /// Скільки чекати, поки гарнітура встановить голосовий канал.
+  static const scoSettleDelay = Duration(milliseconds: 1200);
+
   /// Знайти серед [devices] Bluetooth-мікрофон, якщо він є.
   ///
   /// Потрібно, щоб «прилипати» до гарнітури: коли плагін `record` піднімає

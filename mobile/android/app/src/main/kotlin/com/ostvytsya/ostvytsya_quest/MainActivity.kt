@@ -172,11 +172,13 @@ class MainActivity : FlutterActivity() {
                                 PersistentFiles.exportFile(applicationContext, name, targetPath)
                         )
                     }
-                    // Керування Bluetooth-каналом (SCO) навмисно ПРИБРАНО:
-                    // ним повністю опікується плагін `record`
-                    // (AndroidRecordConfig.manageBluetooth, типово true). Наша
-                    // паралельна реалізація конфліктувала з ним — див.
-                    // коментар у wake_gate.dart.
+                    "scoStart" -> {
+                        result.success(CommunicationRouter.start(applicationContext))
+                    }
+                    "scoStop" -> {
+                        CommunicationRouter.stop(applicationContext)
+                        result.success(null)
+                    }
                     "sessionEncoderStart" -> {
                         // Пишемо у спільну медіатеку (переживає видалення
                         // застосунку), а якщо це не вдалося чи система застара —
