@@ -200,29 +200,28 @@ class AudioPipeline {
       // нього в цю мить веде в тишу без жодної помилки. Провідні пристрої
       // й гарнітури, що вже стабільно під'єднані, такої затримки не мають,
       // тож чекаємо лише для bluetooth.
+      var superseded = false;
       if (_resolvedOutputDevice != null &&
           _resolvedOutputDevice!.bucket == 'bluetooth') {
         await Future<void>.delayed(const Duration(milliseconds: 1500));
-        if (token != _outputSettleToken || !_opened) return;
-        await _resolveAudioDevices();
+        // Поки чекали, прилетіла новіша зміна — маршрут виходу застосує
+        // саме вона. Але з ФУНКЦІЇ виходити не можна: нижче ще перемикання
+        // режиму відтворення й перезапуск мікрофона. Раніше тут стояв
+        // return, і при під'єднанні/від'єднанні гарнітури (а Android сипле
+        // такими подіями пачками) режим відтворення лишався старим —
+        // медіа при піднятому SCO або навпаки. Саме через це голос
+        // персонажа пропадав після кожного перемикання пристрою.
+        superseded = token != _outputSettleToken || !_opened;
+        if (!superseded) await _resolveAudioDevices();
       }
-      await _applyOutputRouting();
+      if (!superseded) await _applyOutputRouting();
     }
     // Гарнітуру під'єднали (чи від'єднали) посеред квесту — режим
     // відтворення треба переузгодити: канал розмови для гарнітури, медіа
-    // для всього іншого. Без цього голос персонажа лишився б у «не тому»
-    // каналі й пропав би.
+    // для всього іншого.
     final wantVoice = _resolvedInputDevice?.bucket == 'bluetooth';
-    if (wantVoice != _voicePlayback && _playerReady && _outputSampleRate != null) {
-      _voicePlayback = wantVoice;
-      await _player.stop();
-      await _player.start(_outputSampleRate!, voiceCommunication: wantVoice);
-      await _applyOutputRouting();
-      _diagCtrl.add(
-        wantVoice
-            ? 'Голос персонажа: перемикаю на канал розмови (Bluetooth-гарнітура).'
-            : 'Голос персонажа: повертаю звичайне медіа-відтворення.',
-      );
+    if (wantVoice != _voicePlayback) {
+      await _restartPlayer(wantVoice);
     }
     if (_resolvedInputDevice?.id != prevInputId) {
       if (_recorderRunning) {
@@ -230,6 +229,32 @@ class AudioPipeline {
         await _queueMicOp(_startRecorderStream);
       }
     }
+  }
+
+  /// Перестворити плеєр у потрібному режимі (канал розмови ↔ медіа).
+  ///
+  /// Поки він перестворюється, шматки голосу НЕ викидаємо, а складаємо в
+  /// чергу й дограємо після — інакше репліка, що саме звучала в мить
+  /// перемикання пристрою, зникала б безслідно.
+  Future<void> _restartPlayer(bool voice) async {
+    _voicePlayback = voice;
+    final rate = _outputSampleRate;
+    if (rate == null) return; // плеєр ще жодного разу не стартував
+    _playerReady = false;
+    await _player.stop();
+    await _player.start(rate, voiceCommunication: voice);
+    await _applyOutputRouting();
+    _playerReady = true;
+    final pending = List<(Uint8List, int)>.from(_pendingChunks);
+    _pendingChunks.clear();
+    for (final (chunk, chunkRate) in pending) {
+      await _feedNow(chunk, chunkRate);
+    }
+    _diagCtrl.add(
+      voice
+          ? 'Голос персонажа: канал розмови (Bluetooth-гарнітура).'
+          : 'Голос персонажа: звичайне медіа-відтворення.',
+    );
   }
 
   Future<void> _stopRecorderStream() async {
