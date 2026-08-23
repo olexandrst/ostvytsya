@@ -129,6 +129,17 @@ class MainActivity : FlutterActivity() {
                         val direction = call.argument<String>("direction") ?: "input"
                         result.success(AudioDeviceUtils.listDevices(applicationContext, direction))
                     }
+                    "startBluetoothMic" -> {
+                        val deviceId = call.argument<Int>("deviceId")
+                        result.success(
+                            if (deviceId == null) false
+                            else CommunicationRouter.start(applicationContext, deviceId)
+                        )
+                    }
+                    "stopBluetoothMic" -> {
+                        CommunicationRouter.stop(applicationContext)
+                        result.success(null)
+                    }
                     "sessionEncoderStart" -> {
                         // Пишемо у спільну медіатеку (переживає видалення
                         // застосунку), а якщо це не вдалося чи система застара —

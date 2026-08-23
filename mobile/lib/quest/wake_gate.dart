@@ -68,11 +68,11 @@ class WakeGateService {
     }
   }
 
-  Future<String?> _resolveInputDeviceId() async {
+  Future<AudioDevice?> _resolveInputDevice() async {
     try {
       final devices = await _deviceService.listInputDevices();
       final preferred = await _settings.getPreferredInputDeviceId();
-      return AudioDeviceService.resolve(devices, preferred)?.id;
+      return AudioDeviceService.resolve(devices, preferred);
     } catch (_) {
       return null;
     }
@@ -97,17 +97,36 @@ class WakeGateService {
     StreamSubscription<Uint8List>? sub;
     var consecutiveErrors = 0;
     var lastPartial = '';
-    var currentDeviceId = await _resolveInputDeviceId();
+    var currentDevice = await _resolveInputDevice();
 
     Future<void> startStream() async {
+      final device = currentDevice;
+      // Раніше тут не було видно взагалі нічого про вибір мікрофона — при
+      // мовчазній тиші неможливо було відрізнити «слухаю не той пристрій»
+      // від «розпізнавання не працює».
+      _diagCtrl.add(
+        device == null
+            ? 'Слухаю мікрофон за замовчуванням.'
+            : 'Слухаю мікрофон «${device.label}».',
+      );
+      // Мікрофон Bluetooth-гарнітури мовчить, доки не піднято SCO.
+      if (device != null && device.bucket == 'bluetooth') {
+        final ok = await _deviceService.startBluetoothMic(device.id);
+        _diagCtrl.add(
+          ok
+              ? 'Bluetooth-мікрофон: вмикаю голосовий канал (SCO)...'
+              : 'Bluetooth-мікрофон: не вдалося увімкнути голосовий канал.',
+        );
+        if (ok) await Future<void>.delayed(AudioDeviceService.scoSettleDelay);
+      }
       final stream = await _recorder.startStream(
         RecordConfig(
           encoder: AudioEncoder.pcm16bits,
           sampleRate: sampleRate,
           numChannels: 1,
-          device: currentDeviceId == null
+          device: device == null
               ? null
-              : InputDevice(id: currentDeviceId!, label: ''),
+              : InputDevice(id: device.id, label: device.label),
         ),
       );
       sub = stream.listen((chunk) async {
@@ -152,13 +171,17 @@ class WakeGateService {
       _,
     ) async {
       if (completer.isCompleted) return;
-      final newId = await _resolveInputDeviceId();
-      if (newId == currentDeviceId) return;
-      currentDeviceId = newId;
+      final newDevice = await _resolveInputDevice();
+      if (newDevice?.id == currentDevice?.id) return;
+      currentDevice = newDevice;
       await sub?.cancel();
       try {
         await _recorder.stop();
       } catch (_) {}
+      // Попередній маршрут міг лишитись на SCO — знімаємо перед новим
+      // вибором, інакше гарнітура, яку щойно від'єднали, тримала б
+      // голосовий канал і глушила вбудований мікрофон.
+      await _deviceService.stopBluetoothMic();
       if (!completer.isCompleted) await startStream();
     });
 
@@ -176,6 +199,9 @@ class WakeGateService {
       try {
         await _recorder.stop();
       } catch (_) {}
+      // Далі квест сам підніме SCO, якщо він йому потрібен, — тут маршрут
+      // лишати за собою не можна.
+      await _deviceService.stopBluetoothMic();
     }
   }
 

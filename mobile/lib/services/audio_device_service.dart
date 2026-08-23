@@ -84,6 +84,41 @@ class AudioDeviceService {
     }
   }
 
+  /// Увімкнути мікрофон Bluetooth-гарнітури (профіль SCO/HFP).
+  ///
+  /// Без цього `AudioRecord`, прив'язаний до Bluetooth-мікрофона,
+  /// відкривається успішно, але віддає суцільну тишу — Android не піднімає
+  /// SCO самотужки. Повертає true, якщо маршрут справді перемкнено; тоді
+  /// перед стартом запису лінку треба дати трохи часу ([scoSettleDelay]).
+  ///
+  /// Для пристроїв, які НЕ є Bluetooth-мікрофоном (звичайна колонка з самим
+  /// лише A2DP, вбудований чи провідний мікрофон), нативний бік нічого не
+  /// робить і повертає false — вмикати SCO для них шкідливо: він глушить
+  /// A2DP і переводить звук у вузькосмуговий «телефонний» тракт.
+  Future<bool> startBluetoothMic(String deviceId) async {
+    try {
+      final ok = await _channel.invokeMethod<bool>('startBluetoothMic', {
+        'deviceId': int.tryParse(deviceId),
+      });
+      return ok ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  Future<void> stopBluetoothMic() async {
+    try {
+      await _channel.invokeMethod('stopBluetoothMic');
+    } on PlatformException {
+      // Нічого й не вмикали — нема що вимикати.
+    }
+  }
+
+  /// Скільки чекати на встановлення SCO-лінку перед стартом запису.
+  /// Гарнітура піднімає його не миттєво; якщо почати писати одразу,
+  /// перші пів секунди-секунда все одно будуть тишею.
+  static const scoSettleDelay = Duration(milliseconds: 1200);
+
   /// Пріоритет для автоматичного вибору пристрою (менше — вищий пріоритет):
   /// зовнішній провідний (USB/jack) → зовнішній бездротовий (Bluetooth) →
   /// власний внутрішній.
