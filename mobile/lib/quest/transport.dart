@@ -1,0 +1,51 @@
+import 'dart:typed_data';
+
+import '../models/character.dart';
+
+enum QuestEventKind {
+  ready,
+  userTranscriptDelta,
+  agentTranscriptDelta,
+  turnComplete,
+  interrupted,
+  error,
+  closed,
+}
+
+class QuestTransportEvent {
+  final QuestEventKind kind;
+  final String? text;
+
+  const QuestTransportEvent(this.kind, {this.text});
+}
+
+/// Спільний інтерфейс для прямого підключення до Gemini Live чи OpenAI
+/// Realtime з телефону — без сервера-посередника. Контролер квесту
+/// (QuestController) працює лише через цей інтерфейс, не знаючи, який саме
+/// провайдер обрано для персонажа.
+abstract class QuestTransport {
+  /// Усі події сесії, крім самого аудіо (воно йде окремим потоком нижче,
+  /// бо частих бінарних шматків забагато, щоб змішувати їх з подіями).
+  Stream<QuestTransportEvent> get events;
+
+  /// Голос персонажа: сирий PCM16 моно, [outputSampleRate] Гц, для програвання.
+  Stream<Uint8List> get outputAudio;
+
+  /// Частота дискретизації, якої очікує провайдер для мікрофона.
+  int get inputSampleRate;
+
+  /// Частота дискретизації голосу персонажа, що надходить назад.
+  int get outputSampleRate;
+
+  /// Підключитися, надіслати налаштування сесії й службовий сигнал вітання,
+  /// щоб персонаж заговорив першим.
+  Future<void> connect();
+
+  /// Надіслати шматок мікрофону (сирий PCM16 моно, inputSampleRate Гц).
+  void sendAudio(Uint8List pcm16);
+
+  Future<void> close();
+}
+
+typedef QuestTransportFactory =
+    QuestTransport Function(Character character, String apiKey);

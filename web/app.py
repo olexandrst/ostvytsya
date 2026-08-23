@@ -37,7 +37,6 @@ from domovyk_quest.characters_store import (  # noqa: E402  (після зава
     GEMINI_VOICE_LABELS,
     GEMINI_VOICES,
     OPENAI_VOICES,
-    PROVIDERS,
     CharacterError,
     build_character,
     clone_character,
@@ -52,6 +51,8 @@ from domovyk_quest.characters_store import (  # noqa: E402  (після зава
 from domovyk_quest.prompt import build_system_instruction  # noqa: E402
 
 from .auth import Auth, session_secret
+from .character_forms import payload_from_form as _payload_from_form
+from .character_forms import resolve_system_prompt
 from .gemini_live import model_name as gemini_model_name, run_quest as run_gemini_quest
 from .realtime import GREETING_TRIGGER, RealtimeError, create_client_secret, model_name
 
@@ -262,50 +263,8 @@ async def quest_page(char_id: str, request: Request,
 
 
 # ── API персонажів ───────────────────────────────────────────────────────────
-
-def _payload_from_form(form: dict[str, Any], base: Optional[dict[str, Any]] = None
-                       ) -> dict[str, Any]:
-    """Скласти YAML-словник персонажа, зберігши поля, яких немає у формі.
-
-    Це важливо: у формі редагуються лише назва/голос/промпт, а persona, style,
-    questions, directives тощо мають лишитися недоторканими.
-    """
-    data = dict(base or {})
-    data["display_name"] = (form.get("display_name") or "").strip()
-    provider = (form.get("provider") or data.get("provider") or "openai").strip()
-    data["provider"] = provider if provider in PROVIDERS else "openai"
-    data["openai_voice"] = (form.get("openai_voice") or "marin").strip()
-    data["voice"] = (form.get("voice") or data.get("voice") or "Charon").strip()
-    data["system_prompt"] = (form.get("system_prompt") or "").strip()
-    try:
-        data["speech_speed"] = round(float(form.get("speech_speed") or 1.0), 2)
-    except (TypeError, ValueError):
-        data["speech_speed"] = 1.0
-
-    words = [w.strip() for w in (form.get("wake_words") or "").split(",") if w.strip()]
-    if words:
-        data["wake_words"] = words
-    elif not data.get("wake_words"):
-        # Консольний режим вимагає кодового слова — тож даємо розумний типовий.
-        data["wake_words"] = [data["display_name"]] if data["display_name"] else ["Оствиця"]
-
-    win = (form.get("win_word") or "").strip()
-    if win:
-        data["win_word"] = win
-    elif not data.get("win_word"):
-        data["win_word"] = "Перемога"
-
-    data.setdefault("language", "uk-UA")
-    data.setdefault("persona", "")
-    data.setdefault("style", [])
-    data.setdefault("intro", "")
-    data.setdefault("win", "")
-    # Порожній власний промпт у файлі не тримаємо: його відсутність і означає
-    # «персонаж живе своїм YAML-сценарієм».
-    if not data.get("system_prompt"):
-        data.pop("system_prompt", None)
-    return data
-
+# _payload_from_form/resolve_system_prompt імпортовано з .character_forms —
+# спільна логіка форми персонажа, щоб не дублювати правила в кількох місцях.
 
 @app.post("/api/characters")
 async def api_create(request: Request, user: str = Depends(require_login)):
@@ -335,15 +294,7 @@ async def api_update(char_id: str, request: Request,
         # дослівно збігається з інструкцією, зібраною зі сценарію, — тоді нічого
         # не «фіксуємо» у system_prompt, і персонаж далі живе своїм YAML-сценарієм
         # (правки сценарію одразу відображатимуться в грі).
-        submitted = (payload.get("system_prompt") or "").strip()
-        if submitted and base.get("questions"):
-            scenario_prompt = build_system_instruction(
-                build_character({**base, "system_prompt": ""})
-            ).strip()
-            if submitted == scenario_prompt:
-                # Прибираємо ключ, а не ставимо порожній рядок: його відсутність
-                # і означає «персонаж живе своїм YAML-сценарієм».
-                payload.pop("system_prompt", None)
+        payload = resolve_system_prompt(payload, base)
         save_raw(char_id, payload, create=False)
     except CharacterError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -427,12 +378,18 @@ async def ws_quest(websocket: WebSocket, char_id: str):
     WebSocket із сирим PCM — його проводимо через сервер, щоб не світити ключ.
     """
     # WebSocket не проходить через Depends(require_login) — перевіряємо самі.
+    # accept() ОБОВ'ЯЗКОВИЙ перед close(code=...): якщо закрити з'єднання до
+    # рукостискання, сервер відхиляє його на рівні HTTP (403), і браузер бачить
+    # абстрактний код 1006 замість заданого — код закриття долітає до клієнта
+    # лише після accept().
     if not websocket.session.get("user"):
+        await websocket.accept()
         await websocket.close(code=4401)
         return
     try:
         character = build_character(read_raw(char_id))
     except CharacterError:
+        await websocket.accept()
         await websocket.close(code=4404)
         return
 
