@@ -129,6 +129,48 @@ class MainActivity : FlutterActivity() {
                         val direction = call.argument<String>("direction") ?: "input"
                         result.success(AudioDeviceUtils.listDevices(applicationContext, direction))
                     }
+                    "backupSettings" -> {
+                        val json = call.argument<String>("json")
+                        val blob = if (json == null) null
+                            else PersistentFiles.encrypt(applicationContext, json)
+                        result.success(
+                            blob != null && PersistentFiles.writeBytes(
+                                applicationContext,
+                                SETTINGS_BACKUP_FILE,
+                                blob,
+                                "application/octet-stream"
+                            )
+                        )
+                    }
+                    "restoreSettings" -> {
+                        val blob = PersistentFiles.readBytes(applicationContext, SETTINGS_BACKUP_FILE)
+                        result.success(
+                            if (blob == null) null
+                            else PersistentFiles.decrypt(applicationContext, blob)
+                        )
+                    }
+                    "persistentFileExists" -> {
+                        val name = call.argument<String>("name")
+                        result.success(
+                            name != null && PersistentFiles.exists(applicationContext, name)
+                        )
+                    }
+                    "persistentFileImport" -> {
+                        val name = call.argument<String>("name")
+                        val sourcePath = call.argument<String>("sourcePath")
+                        result.success(
+                            name != null && sourcePath != null &&
+                                PersistentFiles.importFile(applicationContext, name, sourcePath)
+                        )
+                    }
+                    "persistentFileExport" -> {
+                        val name = call.argument<String>("name")
+                        val targetPath = call.argument<String>("targetPath")
+                        result.success(
+                            name != null && targetPath != null &&
+                                PersistentFiles.exportFile(applicationContext, name, targetPath)
+                        )
+                    }
                     "startBluetoothMic" -> {
                         val deviceId = call.argument<Int>("deviceId")
                         result.success(
@@ -301,5 +343,8 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val PREF_LAST_ACK_TS = "last_ack_exit_ts"
+
+        /** Резервна копія налаштувань у спільній теці Documents/Оствиця. */
+        private const val SETTINGS_BACKUP_FILE = "settings.bak"
     }
 }

@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'device_id_service.dart';
+import 'persistent_backup.dart';
 
 /// Ключі API (Gemini, OpenAI) і локальні налаштування пристрою (жодного
 /// логіна — усе зберігається лише на цьому пристрої).
@@ -15,6 +17,59 @@ class SettingsStore {
   static const _sessionRecordingEnabledName = 'session_recording_enabled';
 
   final _storage = const FlutterSecureStorage();
+  final _backup = PersistentBackup();
+
+  /// Усі ключі налаштувань — саме вони потрапляють у резервну копію, яка
+  /// переживає видалення застосунку.
+  static const _backedUpKeys = [
+    _geminiKeyName,
+    _openaiKeyName,
+    _instanceIdName,
+    _inputDeviceIdName,
+    _outputDeviceIdName,
+    _sessionRecordingEnabledName,
+  ];
+
+  /// Перекласти поточні налаштування у резервну копію. Викликається після
+  /// КОЖНОЇ зміни — налаштувань мало й міняються вони рідко, тож дешевше
+  /// щоразу перезаписати все, ніж стежити за окремими ключами.
+  Future<void> _syncBackup() async {
+    final data = <String, String>{};
+    for (final key in _backedUpKeys) {
+      final value = await _storage.read(key: key);
+      if (value != null) data[key] = value;
+    }
+    await _backup.saveSettings(jsonEncode(data));
+  }
+
+  /// Відновити налаштування з резервної копії, якщо на пристрої їх ще
+  /// немає (свіже встановлення застосунку). Наявні значення НЕ чіпаємо —
+  /// щоб відновлення ніколи не затерло те, що користувач уже ввів.
+  ///
+  /// Викликається один раз на старті застосунку, до першого читання
+  /// налаштувань.
+  Future<void> restoreIfEmpty() async {
+    try {
+      final existing = await _storage.read(key: _geminiKeyName);
+      final existingOpenAi = await _storage.read(key: _openaiKeyName);
+      if ((existing != null && existing.isNotEmpty) ||
+          (existingOpenAi != null && existingOpenAi.isNotEmpty)) {
+        return;
+      }
+      final raw = await _backup.loadSettings();
+      if (raw == null || raw.isEmpty) return;
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      for (final entry in data.entries) {
+        if (!_backedUpKeys.contains(entry.key)) continue;
+        final current = await _storage.read(key: entry.key);
+        if (current != null && current.isNotEmpty) continue;
+        await _storage.write(key: entry.key, value: '${entry.value}');
+      }
+    } catch (_) {
+      // Пошкоджена чи нечитабельна копія не має заважати запуску — просто
+      // працюємо з чистими налаштуваннями, як і раніше.
+    }
+  }
 
   Future<String?> getGeminiApiKey() => _storage.read(key: _geminiKeyName);
   Future<String?> getOpenAiApiKey() => _storage.read(key: _openaiKeyName);
@@ -26,6 +81,7 @@ class SettingsStore {
     } else {
       await _storage.write(key: _geminiKeyName, value: v);
     }
+    await _syncBackup();
   }
 
   Future<void> setOpenAiApiKey(String value) async {
@@ -35,6 +91,7 @@ class SettingsStore {
     } else {
       await _storage.write(key: _openaiKeyName, value: v);
     }
+    await _syncBackup();
   }
 
   /// Ідентифікатор цього примірника застосунку — за замовчуванням
@@ -47,6 +104,7 @@ class SettingsStore {
     if (existing != null && existing.trim().isNotEmpty) return existing;
     final generated = await _defaultInstanceId();
     await _storage.write(key: _instanceIdName, value: generated);
+    await _syncBackup();
     return generated;
   }
 
@@ -70,6 +128,7 @@ class SettingsStore {
     final v = value.trim();
     if (v.isEmpty) return;
     await _storage.write(key: _instanceIdName, value: v);
+    await _syncBackup();
   }
 
   /// Людяний, легко відрізнюваний ідентифікатор без символів, які легко
@@ -119,6 +178,7 @@ class SettingsStore {
     } else {
       await _storage.write(key: _inputDeviceIdName, value: id);
     }
+    await _syncBackup();
   }
 
   Future<String?> getPreferredOutputDeviceId() =>
@@ -130,6 +190,7 @@ class SettingsStore {
     } else {
       await _storage.write(key: _outputDeviceIdName, value: id);
     }
+    await _syncBackup();
   }
 
   /// Автозапис кожної сесії квесту в .m4a на зовнішнє сховище — увімкнено
@@ -139,6 +200,8 @@ class SettingsStore {
     return v == null ? true : v == 'true';
   }
 
-  Future<void> setSessionRecordingEnabled(bool value) =>
-      _storage.write(key: _sessionRecordingEnabledName, value: '$value');
+  Future<void> setSessionRecordingEnabled(bool value) async {
+    await _storage.write(key: _sessionRecordingEnabledName, value: '$value');
+    await _syncBackup();
+  }
 }

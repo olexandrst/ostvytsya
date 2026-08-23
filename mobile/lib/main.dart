@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
+import 'services/settings_store.dart';
 
 void main() {
   // Ловимо будь-які необроблені помилки Dart і пишемо їх у системний лог
@@ -18,7 +19,12 @@ void main() {
     );
   };
   runZonedGuarded(
-    () {
+    () async {
+      // Свіже встановлення застосунку? Підтягуємо налаштування (ключі API,
+      // вибір аудіо-пристроїв тощо) з резервної копії у спільній теці — сам
+      // Android їх не відновлює, бо APK ставиться збоку, а не з Play Store.
+      WidgetsFlutterBinding.ensureInitialized();
+      await SettingsStore().restoreIfEmpty();
       runApp(const OstvytsyaApp());
     },
     (error, stack) {
