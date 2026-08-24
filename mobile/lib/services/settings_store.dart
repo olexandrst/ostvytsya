@@ -15,6 +15,8 @@ class SettingsStore {
   static const _inputDeviceIdName = 'preferred_input_device_id';
   static const _outputDeviceIdName = 'preferred_output_device_id';
   static const _sessionRecordingEnabledName = 'session_recording_enabled';
+  static const _statusReportingEnabledName = 'status_reporting_enabled';
+  static const _statusServerUrlName = 'status_server_url';
 
   final _storage = const FlutterSecureStorage();
   final _backup = PersistentBackup();
@@ -28,6 +30,8 @@ class SettingsStore {
     _inputDeviceIdName,
     _outputDeviceIdName,
     _sessionRecordingEnabledName,
+    _statusReportingEnabledName,
+    _statusServerUrlName,
   ];
 
   /// Перекласти поточні налаштування у резервну копію. Викликається після
@@ -202,6 +206,33 @@ class SettingsStore {
 
   Future<void> setSessionRecordingEnabled(bool value) async {
     await _storage.write(key: _sessionRecordingEnabledName, value: '$value');
+    await _syncBackup();
+  }
+
+  /// Періодичний звіт статусу термінала у веб-панель. Типово ВИМКНЕНО:
+  /// поки користувач сам не ввімкне й не вкаже адресу сервера, застосунок
+  /// не надсилає нікуди нічого.
+  Future<bool> getStatusReportingEnabled() async {
+    final v = await _storage.read(key: _statusReportingEnabledName);
+    return v == 'true';
+  }
+
+  Future<void> setStatusReportingEnabled(bool value) async {
+    await _storage.write(key: _statusReportingEnabledName, value: '$value');
+    await _syncBackup();
+  }
+
+  /// Адреса веб-панелі у вигляді `https://host:port`.
+  Future<String?> getStatusServerUrl() =>
+      _storage.read(key: _statusServerUrlName);
+
+  Future<void> setStatusServerUrl(String value) async {
+    final v = value.trim();
+    if (v.isEmpty) {
+      await _storage.delete(key: _statusServerUrlName);
+    } else {
+      await _storage.write(key: _statusServerUrlName, value: v);
+    }
     await _syncBackup();
   }
 }

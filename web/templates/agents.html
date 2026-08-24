@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Термінали · Оствиця{% endblock %}
+{% block content %}
+<div class="head-row">
+  <h1>Термінали</h1>
+  <span class="muted">{{ online_count }} на зв'язку з {{ agents|length }}</span>
+</div>
+
+{% if not agents %}
+  <div class="card empty">
+    <span class="empty-icon">📡</span>
+    <p class="muted">
+      Жоден термінал ще не звітував. Увімкни звітування в застосунку
+      (Налаштування → Звіти в панель) і вкажи адресу цього сервера.
+    </p>
+  </div>
+{% else %}
+<div class="card">
+  <div class="table-scroll">
+    <table class="agents">
+      <thead>
+        <tr>
+          <th>Термінал</th>
+          <th>Квест</th>
+          <th>Телефон</th>
+          <th>Батарея</th>
+          <th>Bluetooth</th>
+          <th>Координати</th>
+          <th>Звіт</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in agents %}
+        <tr class="{{ 'is-offline' if not a.online else '' }}">
+          <td>
+            <strong>{{ a.agent_id }}</strong>
+            {% if a.app_version %}<div class="muted small">{{ a.app_version }}</div>{% endif %}
+          </td>
+          <td>
+            {% if a.quest_running %}
+              <span class="badge badge-accent">🎙 йде</span>
+              {% if a.character %}<div class="muted small">{{ a.character }}</div>{% endif %}
+            {% else %}
+              <span class="badge">💤 спить</span>
+            {% endif %}
+          </td>
+          <td>
+            {{ a.device_model or '—' }}
+            {% if a.phone_number %}<div class="muted small">{{ a.phone_number }}</div>{% endif %}
+          </td>
+          <td>
+            {% if a.battery_percent is not none %}
+              <span class="badge {{ 'badge-warn' if a.battery_percent <= 20 else '' }}">
+                {{ a.battery_percent }}%
+              </span>
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if a.bluetooth %}
+              {% for d in a.bluetooth %}
+                <div class="small">
+                  {{ d.name }}
+                  {% if d.battery is not none %}— {{ d.battery }}%{% endif %}
+                </div>
+              {% endfor %}
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if a.coordinates %}
+              <a href="{{ a.map_url }}" target="_blank" rel="noopener">{{ a.coordinates }}</a>
+            {% else %}—{% endif %}
+          </td>
+          <td class="muted small">
+            {% if a.seconds_ago < 60 %}
+              щойно
+            {% elif a.seconds_ago < 3600 %}
+              {{ (a.seconds_ago // 60) }} хв тому
+            {% else %}
+              {{ (a.seconds_ago // 3600) }} год тому
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<p class="muted small">
+  Термінали звітують раз на 5 хвилин. Той, від якого нічого не чути понад
+  12 хвилин, показаний приглушено.
+</p>
+
+<script>
+  // Сторінка — це зріз стану, тож просто оновлюємо її раз на пів хвилини.
+  setTimeout(function () { window.location.reload(); }, 30000);
+</script>
+{% endblock %}

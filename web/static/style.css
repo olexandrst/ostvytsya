@@ -326,3 +326,39 @@ input:focus, select:focus, textarea:focus {
 .line-agent { border-left: 3px solid var(--accent); }
 .line-user { border-left: 3px solid var(--gold); }
 .line-system { color: var(--muted); font-size: .88rem; background: transparent; border: none; }
+
+/* ── Термінали (мобільні агенти) ─────────────────────────────────────────── */
+
+.small { font-size: 13px; }
+
+/* Таблиця з багатьма колонками не має ламати сторінку на телефоні —
+   прокручуємо саме її, а не весь документ. */
+.table-scroll { overflow-x: auto; }
+
+table.agents {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+table.agents th,
+table.agents td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+
+table.agents th {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+table.agents tr:last-child td { border-bottom: none; }
+
+/* Термінал, від якого давно нічого не чути: видно, але не відволікає. */
+table.agents tr.is-offline td { opacity: .45; }
+
+.badge-warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--gold); }

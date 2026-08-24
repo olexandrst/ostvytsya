@@ -1,9 +1,0 @@
-# Ядро
-google-genai>=1.16.0     # Gemini Live API (Native Audio)
-sounddevice>=0.4.6       # мікрофон + колонка (PortAudio)
-numpy>=1.24              # RMS / робота з PCM
-PyYAML>=6.0              # конфіги
-
-# Локальне офлайн-розпізнавання кодового слова (wake.mode=vosk).
-# Не обов'язкове для режимів gemini/manual — можна закоментувати.
-vosk>=0.3.45

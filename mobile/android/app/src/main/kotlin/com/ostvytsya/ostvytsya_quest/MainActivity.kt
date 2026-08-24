@@ -172,6 +172,9 @@ class MainActivity : FlutterActivity() {
                                 PersistentFiles.exportFile(applicationContext, name, targetPath)
                         )
                     }
+                    "collectTelemetry" -> {
+                        result.success(DeviceTelemetry.collect(applicationContext))
+                    }
                     "scoStart" -> {
                         result.success(CommunicationRouter.start(applicationContext))
                     }

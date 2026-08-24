@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../constants.dart';
 import '../services/audio_device_service.dart';
 import '../services/settings_store.dart';
+import '../services/status_reporter.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -26,6 +27,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _showGemini = false;
   bool _showOpenAi = false;
   bool _sessionRecordingEnabled = false;
+  bool _statusReportingEnabled = false;
+  final _statusServerCtrl = TextEditingController();
 
   List<AudioDevice> _inputDevices = [];
   List<AudioDevice> _outputDevices = [];
@@ -49,6 +52,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _selectedInputId = await _store.getPreferredInputDeviceId();
     _selectedOutputId = await _store.getPreferredOutputDeviceId();
     _sessionRecordingEnabled = await _store.getSessionRecordingEnabled();
+    _statusReportingEnabled = await _store.getStatusReportingEnabled();
+    _statusServerCtrl.text = await _store.getStatusServerUrl() ?? '';
     _geminiCtrl.text = gemini ?? '';
     _openaiCtrl.text = openai ?? '';
     _instanceIdCtrl.text = instanceId;
@@ -78,6 +83,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _store.setPreferredInputDeviceId(_selectedInputId);
     await _store.setPreferredOutputDeviceId(_selectedOutputId);
     await _store.setSessionRecordingEnabled(_sessionRecordingEnabled);
+    await _store.setStatusReportingEnabled(_statusReportingEnabled);
+    await _store.setStatusServerUrl(_statusServerCtrl.text);
+    // Перезапускаємо звітування з новими налаштуваннями (або зупиняємо,
+    // якщо його щойно вимкнули).
+    if (_statusReportingEnabled) {
+      StatusReporter.instance.start();
+    } else {
+      StatusReporter.instance.stop();
+    }
     if (mounted) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -105,6 +119,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _geminiCtrl.dispose();
     _openaiCtrl.dispose();
     _instanceIdCtrl.dispose();
+    _statusServerCtrl.dispose();
     super.dispose();
   }
 
@@ -306,6 +321,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: _sessionRecordingEnabled,
                   onChanged: (v) =>
                       setState(() => _sessionRecordingEnabled = v),
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 8),
+                const Text(
+                  'Звіти в панель',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Вимкнено за замовчуванням. Якщо увімкнути — раз на 5 хвилин '
+                  'застосунок надсилає в панель свій стан: ідентифікатор, чи '
+                  'йде квест, модель телефону, заряд (свій і Bluetooth-'
+                  'пристроїв) та координати. Працює у фоні й ні на що не '
+                  'впливає: якщо сервер недоступний, квест іде як завжди.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Надсилати статус у панель'),
+                  value: _statusReportingEnabled,
+                  onChanged: (v) => setState(() => _statusReportingEnabled = v),
+                ),
+                TextField(
+                  controller: _statusServerCtrl,
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    labelText: 'Адреса сервера',
+                    hintText: 'https://host:port',
+                    errorText:
+                        _statusReportingEnabled &&
+                            _statusServerCtrl.text.trim().isNotEmpty &&
+                            StatusReporter.normalizeServerUrl(
+                                  _statusServerCtrl.text,
+                                ) ==
+                                null
+                        ? 'Очікується адреса у вигляді https://host:port'
+                        : null,
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Номер телефону Android віддає лише тоді, коли його записав '
+                  'на SIM-карту оператор — здебільшого ця колонка в панелі '
+                  'лишається порожньою. Заряд Bluetooth-пристрою теж доступний '
+                  'не на всіх телефонах.',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
                 ),
                 const SizedBox(height: 24),
                 const Divider(),

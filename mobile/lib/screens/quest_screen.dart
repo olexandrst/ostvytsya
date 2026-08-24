@@ -10,6 +10,7 @@ import '../quest/quest_controller.dart';
 import '../quest/transport.dart';
 import '../services/foreground_service.dart';
 import '../services/settings_store.dart';
+import '../services/status_reporter.dart';
 
 class QuestScreen extends StatefulWidget {
   final Character character;
@@ -103,6 +104,9 @@ class _QuestScreenState extends State<QuestScreen> {
       });
     });
 
+    // Панель має бачити, що на цьому терміналі саме зараз іде квест.
+    QuestActivity.started(character.displayName);
+    StatusReporter.instance.reportNow();
     unawaited(controller.run());
   }
 
@@ -131,6 +135,8 @@ class _QuestScreenState extends State<QuestScreen> {
 
   @override
   void dispose() {
+    QuestActivity.stopped();
+    StatusReporter.instance.reportNow();
     _controller?.dispose();
     _foreground.stop();
     _scrollCtrl.dispose();

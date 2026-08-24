@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
 import 'services/settings_store.dart';
+import 'services/status_reporter.dart';
 
 void main() {
   // Ловимо будь-які необроблені помилки Dart і пишемо їх у системний лог
@@ -25,6 +26,9 @@ void main() {
       // Android їх не відновлює, бо APK ставиться збоку, а не з Play Store.
       WidgetsFlutterBinding.ensureInitialized();
       await SettingsStore().restoreIfEmpty();
+      // Звітування саме перевіряє, чи його ввімкнено, — тут просто заводимо
+      // таймер. Вимкнене (типово) воно нічого не робить і нікуди не ходить.
+      StatusReporter.instance.start();
       runApp(const OstvytsyaApp());
     },
     (error, stack) {

@@ -29,6 +29,8 @@ from starlette.status import HTTP_303_SEE_OTHER
 
 from domovyk_quest.envfile import load_env_file
 
+from .agents import registry as agent_registry
+
 # Читаємо .env ДО того, як щось із нього знадобиться (Auth зчитує оточення
 # одразу при створенні). Працює однаково на Linux/macOS і Windows.
 _ENV_PATH, _ENV_KEYS = load_env_file()
@@ -403,6 +405,45 @@ async def ws_quest(websocket: WebSocket, char_id: str):
             await websocket.close()
         except RuntimeError:
             pass  # уже закрито
+
+
+# ── Термінали (мобільні агенти) ──────────────────────────────────────────────
+
+@app.post("/api/agents/status")
+async def api_agent_status(request: Request):
+    """Прийняти звіт від мобільного термінала.
+
+    Ендпойнт НАВМИСНО без логіна: телефони в парку не мають сесійної куки, а
+    заводити для них окремий механізм автентифікації заради статусу —
+    надлишково. Дані сюди йдуть неконфіденційні, а сам реєстр обмежений
+    згори, тож найгірше, що дає відкритий ендпойнт, — сміттєвий рядок у
+    таблиці. Саму панель видно лише після логіна.
+
+    Відповідаємо 200 навіть на негодящий звіт: телефон нічого не зможе з цим
+    вдіяти, а зайві помилки в його логах тільки заважатимуть.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+    if not isinstance(payload, dict):
+        return JSONResponse({"status": "ignored"}, status_code=200)
+    status = agent_registry.update(payload)
+    if status is None:
+        return JSONResponse({"status": "ignored"}, status_code=200)
+    return JSONResponse({"status": "ok", "interval_s": 300})
+
+
+@app.get("/agents", response_class=HTMLResponse)
+async def agents_page(request: Request, user: str = Depends(require_login)):
+    agents = agent_registry.all()
+    return templates.TemplateResponse(request, "agents.html", {
+        "user": user,
+        "csrf": csrf_token(request),
+        "agents": agents,
+        "online_count": sum(1 for a in agents if a.online),
+        "model": model_name(),
+    })
 
 
 @app.head("/")
