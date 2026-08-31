@@ -30,6 +30,7 @@ from starlette.status import HTTP_303_SEE_OTHER
 from domovyk_quest.envfile import load_env_file
 
 from .agents import registry as agent_registry
+from .mobile_characters import store as mobile_character_store
 
 # Читаємо .env ДО того, як щось із нього знадобиться (Auth зчитує оточення
 # одразу при створенні). Працює однаково на Linux/macOS і Windows.
@@ -432,6 +433,32 @@ async def api_agent_status(request: Request):
     if status is None:
         return JSONResponse({"status": "ignored"}, status_code=200)
     return JSONResponse({"status": "ok", "interval_s": 300})
+
+
+@app.post("/api/characters-sync")
+async def api_characters_sync(request: Request):
+    """Синхронізація персонажів між терміналами («останній запис перемагає»).
+
+    Шлях навмисно НЕ /api/characters/sync: його з'їдав би зареєстрований
+    раніше маршрут /api/characters/{char_id} (сприймаючи «sync» як id).
+
+    Телефон надсилає повний набір своїх персонажів (мобільний JSON-формат із
+    updated_at), у відповідь отримує ті, що на сервері новіші, або яких у
+    нього немає. Без логіна — з тих самих міркувань, що й /api/agents/status;
+    вміст персонажів неконфіденційний, а телефони валідують усе, що
+    отримують, тож найгірший наслідок відкритості — сміттєвий персонаж у
+    списку, який легко видалити.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+    if not isinstance(payload, dict):
+        return JSONResponse({"status": "ignored"}, status_code=200)
+    characters = mobile_character_store.sync(payload.get("characters"))
+    return JSONResponse(
+        {"status": "ok", "interval_s": 300, "characters": characters}
+    )
 
 
 @app.get("/agents", response_class=HTMLResponse)

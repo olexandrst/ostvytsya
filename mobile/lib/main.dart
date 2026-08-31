@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
+import 'services/character_sync.dart';
 import 'services/settings_store.dart';
 import 'services/status_reporter.dart';
 
@@ -29,6 +30,9 @@ void main() {
       // Звітування саме перевіряє, чи його ввімкнено, — тут просто заводимо
       // таймер. Вимкнене (типово) воно нічого не робить і нікуди не ходить.
       StatusReporter.instance.start();
+      // Синхронізація персонажів між терміналами: працює, лише коли в
+      // налаштуваннях вказано адресу сервера; без неї — тихо нічого не робить.
+      CharacterSync.instance.start();
       runApp(const OstvytsyaApp());
     },
     (error, stack) {

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../constants.dart';
 import '../models/character.dart';
+import '../services/character_store.dart';
 import '../services/session_recorder.dart';
 import '../services/settings_store.dart';
 import 'audio_pipeline.dart';
@@ -54,7 +55,11 @@ class QuestController {
     });
   }
 
-  final Character character;
+  /// Не final: термінал може тижнями стояти на цьому екрані, а персонажа тим
+  /// часом відредагують на іншому телефоні й синхронізація принесе нову
+  /// версію на диск — перед кожним циклом «сон → квест» перечитуємо її
+  /// (див. _refreshCharacter), щоб правки застосовувались без перезаходу.
+  Character character;
   final String apiKey;
   final QuestTransportFactory transportFactory;
   final AudioPipeline audio = AudioPipeline();
@@ -88,6 +93,7 @@ class QuestController {
     await audio.open();
 
     while (!_stopRequested) {
+      await _refreshCharacter();
       _statusCtrl.add(
         QuestStatusUpdate(QuestPhase.listening, runCount: _runCount),
       );
@@ -165,6 +171,29 @@ class QuestController {
     await wakeGate.dispose();
     _statusCtrl.add(QuestStatusUpdate(QuestPhase.stopped, runCount: _runCount));
     _running = false;
+  }
+
+  /// Підхопити з диска новішу версію персонажа (її могла принести
+  /// синхронізація з сервером), не перериваючи цикл. Лише МІЖ квестами:
+  /// посеред живої розмови персонажа не підмінюємо. Провайдер і API-ключ
+  /// обрані під час відкриття екрана — їх зміна підхопиться після
+  /// перезаходу, а голос/промпт/кодові слова (те, що реально редагують)
+  /// застосовуються тут.
+  Future<void> _refreshCharacter() async {
+    try {
+      final fresh = await CharacterStore().read(character.id);
+      if (fresh != null && fresh.updatedAt > character.updatedAt) {
+        character = fresh;
+        _transcriptCtrl.add(
+          const TranscriptLine(
+            'system',
+            'Персонажа оновлено із синхронізації — застосовано нову версію.',
+          ),
+        );
+      }
+    } catch (_) {
+      // Не вдалося перечитати — граємо з тим, що є.
+    }
   }
 
   Future<void> stop() async {

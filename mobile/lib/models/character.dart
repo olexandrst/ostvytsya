@@ -17,6 +17,12 @@ class Character {
   String winWord;
   List<String> wakeWords;
 
+  /// Unix-час (секунди) останньої правки користувачем — основа синхронізації
+  /// між терміналами («останній запис перемагає»). 0 — типовий персонаж із
+  /// комплекту, якого ще ніхто не редагував: будь-яка правка на будь-якому
+  /// телефоні його переважить.
+  int updatedAt;
+
   Character({
     required this.id,
     required this.displayName,
@@ -27,6 +33,7 @@ class Character {
     this.systemPrompt = '',
     this.winWord = kDefaultWinWord,
     List<String>? wakeWords,
+    this.updatedAt = 0,
   }) : wakeWords = wakeWords ?? const [];
 
   factory Character.fromJson(Map<String, dynamic> json) {
@@ -48,6 +55,7 @@ class Character {
                 .where((e) => e.trim().isNotEmpty)
                 .toList()
           : const [],
+      updatedAt: (json['updated_at'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -61,6 +69,7 @@ class Character {
     'system_prompt': systemPrompt,
     'win_word': winWord,
     'wake_words': wakeWords,
+    'updated_at': updatedAt,
   };
 
   Character copyWith({
@@ -73,6 +82,7 @@ class Character {
     String? systemPrompt,
     String? winWord,
     List<String>? wakeWords,
+    int? updatedAt,
   }) {
     return Character(
       id: id ?? this.id,
@@ -84,6 +94,7 @@ class Character {
       systemPrompt: systemPrompt ?? this.systemPrompt,
       winWord: winWord ?? this.winWord,
       wakeWords: wakeWords ?? List<String>.from(this.wakeWords),
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 

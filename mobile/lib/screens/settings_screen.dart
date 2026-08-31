@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../constants.dart';
 import '../services/audio_device_service.dart';
+import '../services/character_sync.dart';
 import '../services/settings_store.dart';
 import '../services/status_reporter.dart';
 
@@ -92,6 +93,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } else {
       StatusReporter.instance.stop();
     }
+    // Адресу сервера могли щойно вписати/змінити — одразу пробуємо
+    // синхронізувати персонажів, не чекаючи наступного такту.
+    CharacterSync.instance.syncNow();
     if (mounted) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -335,7 +339,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   'застосунок надсилає в панель свій стан: ідентифікатор, чи '
                   'йде квест, модель телефону, заряд (свій і Bluetooth-'
                   'пристроїв) та координати. Працює у фоні й ні на що не '
-                  'впливає: якщо сервер недоступний, квест іде як завжди.',
+                  'впливає: якщо сервер недоступний, квест іде як завжди.\n\n'
+                  'Сама адреса сервера (незалежно від перемикача звітів) '
+                  'також вмикає синхронізацію персонажів між терміналами: '
+                  'правка персонажа на одному телефоні за кілька хвилин '
+                  "з'являється на всіх інших.",
                   style: TextStyle(color: Colors.grey),
                 ),
                 SwitchListTile(
@@ -351,9 +359,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   decoration: InputDecoration(
                     labelText: 'Адреса сервера',
                     hintText: 'https://host:port',
+                    // Адреса важлива і без перемикача звітів (нею ж
+                    // вмикається синхронізація персонажів) — тож і помилку
+                    // показуємо незалежно від нього.
                     errorText:
-                        _statusReportingEnabled &&
-                            _statusServerCtrl.text.trim().isNotEmpty &&
+                        _statusServerCtrl.text.trim().isNotEmpty &&
                             StatusReporter.normalizeServerUrl(
                                   _statusServerCtrl.text,
                                 ) ==

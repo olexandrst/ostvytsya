@@ -13,6 +13,11 @@ import '../models/character.dart';
 class CharacterStore {
   static const _defaultIds = ['domovychok', 'vodyanyk', 'povitrulya', 'derevo'];
 
+  /// Гачок синхронізації: CharacterSync виставляє його на старті, і кожне
+  /// КОРИСТУВАЦЬКЕ збереження (touch: true) одразу пушить зміни на сервер.
+  /// Статичний навмисно — екрани створюють власні екземпляри CharacterStore.
+  static void Function()? onLocalChange;
+
   Directory? _dir;
 
   Future<Directory> _charactersDir() async {
@@ -71,13 +76,31 @@ class CharacterStore {
     return Character.fromJson(jsonDecode(raw) as Map<String, dynamic>);
   }
 
-  Future<void> save(Character character) async {
+  /// Зберегти персонажа. [touch] = true (типово) — це правка користувача:
+  /// таймстамп оновлюється і зміна одразу асинхронно пушиться на сервер.
+  /// [touch] = false — застосування версії З СЕРВЕРА: її таймстамп треба
+  /// зберегти як є, інакше синхронізація зациклиться.
+  Future<void> save(Character character, {bool touch = true}) async {
+    if (touch) {
+      // Рівняємось на таймстамп, що ВЖЕ лежить на диску (а не в переданому
+      // об'єкті): екран редагування збирає персонажа заново з updatedAt = 0,
+      // і без цього правка могла б отримати час, менший за попередній
+      // (напр. після персонажа з «майбутнім» часом із телефона з кривим
+      // годинником) — і назавжди застрягти непоміченою для інших терміналів.
+      final prev = (await read(character.id))?.updatedAt ?? character.updatedAt;
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      character.updatedAt = now > prev ? now : prev + 1;
+    }
     final dir = await _charactersDir();
     final file = _fileFor(dir, character.id);
     const encoder = JsonEncoder.withIndent('  ');
     await file.writeAsString(encoder.convert(character.toJson()), flush: true);
+    if (touch) onLocalChange?.call();
   }
 
+  /// Видалення НЕ синхронізується: якщо персонаж є на сервері, наступний
+  /// такт синхронізації поверне його. Це свідомо — випадковий дотик на
+  /// одному терміналі не має стирати персонажа на всьому парку телефонів.
   Future<void> delete(String id) async {
     final dir = await _charactersDir();
     final file = _fileFor(dir, id);
