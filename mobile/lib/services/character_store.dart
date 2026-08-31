@@ -13,6 +13,11 @@ import '../models/character.dart';
 class CharacterStore {
   static const _defaultIds = ['domovychok', 'vodyanyk', 'povitrulya', 'derevo'];
 
+  /// Незнищенні персонажі парку: їх можна редагувати, але НЕ видаляти —
+  /// ні локально, ні через синхронізацію (сервер теж відкидає їхні
+  /// «надгробки» — див. web/mobile_characters.py).
+  static const protectedIds = {'domovychok', 'povitrulya', 'derevo'};
+
   /// Гачок синхронізації: CharacterSync виставляє його на старті, і кожне
   /// КОРИСТУВАЦЬКЕ збереження (touch: true) одразу пушить зміни на сервер.
   /// Статичний навмисно — екрани створюють власні екземпляри CharacterStore.
@@ -33,11 +38,44 @@ class CharacterStore {
 
   File _fileFor(Directory dir, String id) => File(p.join(dir.path, '$id.json'));
 
+  /// «Надгробки» видалених персонажів: id → таймстамп видалення. Живуть
+  /// ПОРУЧ із текою персонажів (не всередині — щоб listAll їх не бачив) і
+  /// синхронізуються нарівні з персонажами: так видалення на одному
+  /// телефоні доїжджає до всіх, а не «воскресає» з сервера.
+  Future<File> _tombstonesFile() async {
+    final docs = await getApplicationDocumentsDirectory();
+    return File(p.join(docs.path, 'character_tombstones.json'));
+  }
+
+  Future<Map<String, int>> tombstones() async {
+    try {
+      final file = await _tombstonesFile();
+      if (!await file.exists()) return {};
+      final raw = jsonDecode(await file.readAsString());
+      if (raw is! Map) return {};
+      return {
+        for (final e in raw.entries)
+          if (e.value is num) e.key.toString(): (e.value as num).toInt(),
+      };
+    } catch (_) {
+      return {}; // зіпсований файл — гірше, що станеться: видалення не доїде
+    }
+  }
+
+  Future<void> _writeTombstones(Map<String, int> tombs) async {
+    final file = await _tombstonesFile();
+    await file.writeAsString(jsonEncode(tombs), flush: true);
+  }
+
   /// Скопіювати типових персонажів із assets при першому запуску (лише ті,
   /// файлів яких ще немає на диску — щоб не затирати правки користувача).
+  /// Персонажів із «надгробком» не відроджуємо: їх свідомо видалили (напр.
+  /// на іншому терміналі), і повернути їх може лише нове збереження.
   Future<void> ensureDefaults() async {
     final dir = await _charactersDir();
+    final tombs = await tombstones();
     for (final id in _defaultIds) {
+      if (tombs.containsKey(id)) continue;
       final file = _fileFor(dir, id);
       if (await file.exists()) continue;
       final raw = await rootBundle.loadString('assets/characters/$id.json');
@@ -81,13 +119,18 @@ class CharacterStore {
   /// [touch] = false — застосування версії З СЕРВЕРА: її таймстамп треба
   /// зберегти як є, інакше синхронізація зациклиться.
   Future<void> save(Character character, {bool touch = true}) async {
+    final tombs = await tombstones();
     if (touch) {
       // Рівняємось на таймстамп, що ВЖЕ лежить на диску (а не в переданому
       // об'єкті): екран редагування збирає персонажа заново з updatedAt = 0,
       // і без цього правка могла б отримати час, менший за попередній
       // (напр. після персонажа з «майбутнім» часом із телефона з кривим
       // годинником) — і назавжди застрягти непоміченою для інших терміналів.
-      final prev = (await read(character.id))?.updatedAt ?? character.updatedAt;
+      // Надгробок теж враховуємо: нове збереження має перемогти видалення.
+      final onDisk = (await read(character.id))?.updatedAt;
+      var prev = onDisk ?? character.updatedAt;
+      final tombTs = tombs[character.id];
+      if (tombTs != null && tombTs > prev) prev = tombTs;
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       character.updatedAt = now > prev ? now : prev + 1;
     }
@@ -95,17 +138,50 @@ class CharacterStore {
     final file = _fileFor(dir, character.id);
     const encoder = JsonEncoder.withIndent('  ');
     await file.writeAsString(encoder.convert(character.toJson()), flush: true);
+    // Живий персонаж і надгробок не можуть існувати разом — збереження
+    // (і користувацьке, і з сервера) скасовує видалення.
+    if (tombs.remove(character.id) != null) {
+      await _writeTombstones(tombs);
+    }
     if (touch) onLocalChange?.call();
   }
 
-  /// Видалення НЕ синхронізується: якщо персонаж є на сервері, наступний
-  /// такт синхронізації поверне його. Це свідомо — випадковий дотик на
-  /// одному терміналі не має стирати персонажа на всьому парку телефонів.
-  Future<void> delete(String id) async {
+  /// Видалити персонажа. Повертає false для незнищенних ([protectedIds]).
+  /// Видалення синхронізується через «надгробок»: інші термінали приберуть
+  /// цього персонажа в себе, щойно отримають його з сервера.
+  Future<bool> delete(String id) async {
+    if (protectedIds.contains(id)) return false;
+    final tombs = await tombstones();
+    var prev = (await read(id))?.updatedAt ?? tombs[id] ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    tombs[id] = now > prev ? now : prev + 1;
+    await _writeTombstones(tombs);
     final dir = await _charactersDir();
     final file = _fileFor(dir, id);
     if (await file.exists()) {
       await file.delete();
+    }
+    onLocalChange?.call();
+    return true;
+  }
+
+  /// Застосувати видалення, що прийшло З СЕРВЕРА («останній запис
+  /// перемагає»): локальна версія, новіша за надгробок, лишається — вона
+  /// сама переможе на сервері наступним пушем.
+  Future<void> applyRemoteDeletion(String id, int ts) async {
+    if (protectedIds.contains(id)) return;
+    final local = await read(id);
+    if (local != null && local.updatedAt >= ts) return;
+    final tombs = await tombstones();
+    if ((tombs[id] ?? -1) >= ts) return; // це видалення вже відоме
+    tombs[id] = ts;
+    await _writeTombstones(tombs);
+    if (local != null) {
+      final dir = await _charactersDir();
+      final file = _fileFor(dir, id);
+      if (await file.exists()) {
+        await file.delete();
+      }
     }
   }
 

@@ -82,13 +82,20 @@ class CharacterSync {
     _syncing = true;
     try {
       final locals = await _store.listAll();
+      final tombs = await _store.tombstones();
       final resp = await http
           .post(
             Uri.parse('$base/api/characters-sync'),
             headers: const {'Content-Type': 'application/json'},
             body: jsonEncode({
               'agent_id': await _settings.getInstanceId(),
-              'characters': [for (final c in locals) c.toJson()],
+              'characters': [
+                for (final c in locals) c.toJson(),
+                // Видалені — як «надгробки», щоб видалення теж доїжджало
+                // до сервера й далі до всіх терміналів.
+                for (final e in tombs.entries)
+                  {'id': e.key, 'deleted': true, 'updated_at': e.value},
+              ],
             }),
           )
           .timeout(_timeout);
@@ -101,8 +108,18 @@ class CharacterSync {
         // Один зіпсований персонаж не має ламати застосування решти.
         try {
           if (raw is! Map) continue;
+          final id = raw['id'];
+          if (id is! String || !_idRe.hasMatch(id)) continue;
+          if (raw['deleted'] == true) {
+            final ts = (raw['updated_at'] as num?)?.toInt() ?? 0;
+            await _store.applyRemoteDeletion(id, ts);
+            continue;
+          }
           final remote = Character.fromJson(Map<String, dynamic>.from(raw));
-          if (!_idRe.hasMatch(remote.id)) continue;
+          // Локальний надгробок, новіший за цю версію, означає: видалення
+          // ще не доїхало до сервера — не відроджуємо персонажа.
+          final tombTs = tombs[remote.id];
+          if (tombTs != null && tombTs >= remote.updatedAt) continue;
           final local = await _store.read(remote.id);
           if (local == null || remote.updatedAt > local.updatedAt) {
             await _store.save(remote, touch: false);

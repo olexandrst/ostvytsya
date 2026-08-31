@@ -160,7 +160,19 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (ok == true) {
-      await _store.delete(c.id);
+      final deleted = await _store.delete(c.id);
+      if (!deleted && mounted) {
+        // Сюди можна потрапити хіба обхідним шляхом — пункт «Видалити» для
+        // незнищенних персонажів узагалі прихований.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '«${c.displayName}» — незнищенний персонаж парку: його можна '
+              'лише редагувати.',
+            ),
+          ),
+        );
+      }
       _load();
     }
   }
@@ -354,10 +366,22 @@ class _HomeScreenState extends State<HomeScreen> {
                             break;
                         }
                       },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'edit', child: Text('Редагувати')),
-                        PopupMenuItem(value: 'clone', child: Text('Клонувати')),
-                        PopupMenuItem(value: 'delete', child: Text('Видалити')),
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Text('Редагувати'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'clone',
+                          child: Text('Клонувати'),
+                        ),
+                        // Трьох головних персонажів парку видалити не можна —
+                        // лише редагувати.
+                        if (!CharacterStore.protectedIds.contains(c.id))
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: Text('Видалити'),
+                          ),
                       ],
                     ),
                     onTap: () => _start(c),
