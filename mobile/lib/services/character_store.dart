@@ -11,7 +11,7 @@ import '../models/character.dart';
 /// документів застосунку (мобільний аналог characters/*.yaml). Жодного
 /// сервера — усе на пристрої.
 class CharacterStore {
-  static const _defaultIds = ['domovychok', 'vodyanyk', 'povitrulya'];
+  static const _defaultIds = ['domovychok', 'vodyanyk', 'povitrulya', 'derevo'];
 
   Directory? _dir;
 
