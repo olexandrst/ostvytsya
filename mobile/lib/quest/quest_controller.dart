@@ -270,6 +270,19 @@ class QuestController {
           finish(QuestOutcome.error);
           break;
         case QuestEventKind.closed:
+          // Раніше сесія, яку сервер закрив сам (напр. через недійсний
+          // API-ключ), помирала БЕЗ ЖОДНОГО сліду в діагностиці — на екрані
+          // просто йшов «Перезапуск квесту». Тому причину показуємо завжди.
+          if (!_stopRequested) {
+            _transcriptCtrl.add(
+              TranscriptLine(
+                'system',
+                evt.text == null
+                    ? "Сервер закрив з'єднання без пояснення причини."
+                    : "Сервер закрив з'єднання: ${evt.text}",
+              ),
+            );
+          }
           finish(_stopRequested ? QuestOutcome.aborted : QuestOutcome.error);
           break;
       }

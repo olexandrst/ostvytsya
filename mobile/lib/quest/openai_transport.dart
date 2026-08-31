@@ -59,7 +59,18 @@ class OpenAiTransport implements QuestTransport {
         );
       },
       onDone: () {
-        _eventsController.add(const QuestTransportEvent(QuestEventKind.closed));
+        // Код і причина закриття — єдина діагностика, коли сервер приймає
+        // з'єднання і тут же рве його сам (напр. недійсний API-ключ).
+        final code = _channel?.closeCode;
+        final reason = _channel?.closeReason?.trim() ?? '';
+        _eventsController.add(
+          QuestTransportEvent(
+            QuestEventKind.closed,
+            text: code == null && reason.isEmpty
+                ? null
+                : 'код ${code ?? "?"}${reason.isEmpty ? "" : ": $reason"}',
+          ),
+        );
       },
       cancelOnError: false,
     );

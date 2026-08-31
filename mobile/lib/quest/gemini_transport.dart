@@ -81,7 +81,19 @@ class GeminiTransport implements QuestTransport {
         );
       },
       onDone: () {
-        _eventsController.add(const QuestTransportEvent(QuestEventKind.closed));
+        // Код і причина закриття — єдина діагностика, коли сервер приймає
+        // з'єднання і тут же рве його сам (типово для недійсного API-ключа:
+        // Gemini Live відповідає закриттям із поясненням, а не HTTP-помилкою).
+        final code = _channel?.closeCode;
+        final reason = _channel?.closeReason?.trim() ?? '';
+        _eventsController.add(
+          QuestTransportEvent(
+            QuestEventKind.closed,
+            text: code == null && reason.isEmpty
+                ? null
+                : 'код ${code ?? "?"}${reason.isEmpty ? "" : ": $reason"}',
+          ),
+        );
       },
       cancelOnError: false,
     );
@@ -220,7 +232,12 @@ class GeminiTransport implements QuestTransport {
     }
 
     if (msg.containsKey('goAway')) {
-      _eventsController.add(const QuestTransportEvent(QuestEventKind.closed));
+      _eventsController.add(
+        const QuestTransportEvent(
+          QuestEventKind.closed,
+          text: 'сервер попросив завершити сесію (goAway)',
+        ),
+      );
     }
   }
 
