@@ -258,9 +258,10 @@ class QuestController {
           userBuf = '';
           modelBuf = '';
           audio.unmuteIfNoAudioYet();
-          if (won) {
-            audio.waitDrained().then((_) => finish(QuestOutcome.won));
-          }
+          // Сесію НЕ закриваємо одразу після перемоги: даємо дітям
+          // [kWinRepeatWindowS] секунд тиші, щоб встигнути перепитати таємне
+          // слово (модель сама вирішує, чи повторити — див. інструкцію),
+          // а завершує квест сторожовий таймер нижче.
           break;
         case QuestEventKind.interrupted:
           break;
@@ -299,8 +300,15 @@ class QuestController {
         finish(QuestOutcome.timeout);
         return;
       }
-      if (won) return;
       final idleS = DateTime.now().difference(lastVoice).inSeconds;
+      if (won) {
+        // Коротше вікно тиші після перемоги — щоб не тримати сесію
+        // відкритою цілу годину, поки ніхто вже не слухає.
+        if (idleS > kWinRepeatWindowS) {
+          finish(QuestOutcome.won);
+        }
+        return;
+      }
       if (idleS > kInactivityTimeoutS) {
         finish(QuestOutcome.timeout);
       }

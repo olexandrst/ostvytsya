@@ -414,17 +414,6 @@ class AudioPipeline {
     }
   }
 
-  /// Зачекати, поки черга відтворення голосу персонажа спорожніє (щоб не
-  /// перервати останню репліку, коли перемога вже зафіксована).
-  Future<void> waitDrained({
-    Duration maxWait = const Duration(seconds: 15),
-  }) async {
-    final deadline = _now + maxWait.inMilliseconds / 1000;
-    while (_queuedUntil > _now && _now < deadline) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-  }
-
   /// Негайно зняти заглушення (напр. після ручної зупинки відтворення).
   void unmuteNow() {
     _unmuteTimer?.cancel();
