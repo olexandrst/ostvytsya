@@ -10,6 +10,10 @@ enum QuestEventKind {
   interrupted,
   error,
   closed,
+
+  /// Інформаційне повідомлення для діагностики (напр. «з'єднання
+  /// відновлено») — нічого не змінює в перебігу квесту.
+  info,
 }
 
 class QuestTransportEvent {

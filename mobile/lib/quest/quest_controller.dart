@@ -294,6 +294,9 @@ class QuestController {
           break;
         case QuestEventKind.interrupted:
           break;
+        case QuestEventKind.info:
+          _transcriptCtrl.add(TranscriptLine('system', evt.text ?? ''));
+          break;
         case QuestEventKind.error:
           _transcriptCtrl.add(TranscriptLine('system', evt.text ?? 'помилка'));
           finish(QuestOutcome.error);

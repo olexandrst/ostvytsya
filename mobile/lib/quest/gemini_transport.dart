@@ -20,9 +20,23 @@ import 'transport.dart';
 ///
 /// Аудіо: вхід 16 кГц PCM16 моно, вихід 24 кГц PCM16 моно — base64 у JSON,
 /// НЕ бінарні кадри.
+///
+/// ВІДНОВЛЕННЯ СЕСІЇ. Одне WebSocket-з'єднання Live API живе ~10 хвилин:
+/// перед розривом сервер шле `goAway`, а сама сесія (контекст розмови)
+/// може жити далі, якщо перепід'єднатися з handle із `sessionResumptionUpdate`
+/// (підтверджено наживо: квест обривався рівно на 9-й хвилині одразу після
+/// репліки персонажа). Тому транспорт запам'ятовує останній resumable handle
+/// і на `goAway` чи раптовий обрив (перемикання wifi/4g у парку) сам
+/// відкриває нове з'єднання з цим handle — персонаж продовжує з того самого
+/// місця, без повторного привітання. Контролер квесту про це дізнається лише
+/// інформаційним рядком.
 class GeminiTransport implements QuestTransport {
   final Character character;
   final String apiKey;
+
+  static final _uri = Uri.parse(
+    'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',
+  );
 
   WebSocketChannel? _channel;
   final _eventsController = StreamController<QuestTransportEvent>.broadcast();
@@ -32,6 +46,30 @@ class GeminiTransport implements QuestTransport {
   int _turnAudioBytes = 0;
   int _turnTextChars = 0;
   int _consecutiveSilentTurns = 0;
+
+  // ── Стан відновлення сесії ────────────────────────────────────────────
+  /// Останній handle, з яким сервер дозволяє відновити сесію.
+  String? _resumeHandle;
+
+  /// `ready` і привітання шлемо лише ОДИН раз за квест — на відновленому
+  /// з'єднанні розмова просто триває.
+  bool _everReady = false;
+  bool _closedByUs = false;
+  bool _reconnecting = false;
+
+  /// Завершується, коли поточне з'єднання отримало `setupComplete`
+  /// (true) або померло раніше (false).
+  Completer<bool>? _setupDone;
+
+  /// Мікрофон під час переп'єднання: кілька секунд не губимо, а
+  /// дошлемо, щойно нове з'єднання буде готове.
+  final _pendingAudio = <Uint8List>[];
+  int _pendingAudioBytes = 0;
+  static const _maxPendingAudioBytes = 16000 * 2 * 3; // ~3 с PCM16 16 кГц
+
+  static const _reconnectAttempts = 5;
+  static const _connectTimeout = Duration(seconds: 10);
+  static const _setupTimeout = Duration(seconds: 15);
 
   static const _maxRecoveryAttempts = 4;
 
@@ -63,45 +101,151 @@ class GeminiTransport implements QuestTransport {
   @override
   int get outputSampleRate => 24000;
 
+  void _emit(QuestTransportEvent event) {
+    // Після close() контролер уже нічого не слухає, а add() у закритий
+    // StreamController кидає виняток — пізні події просто відкидаємо.
+    if (!_eventsController.isClosed) _eventsController.add(event);
+  }
+
   @override
   Future<void> connect() async {
-    final uri = Uri.parse(
-      'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',
-    );
-    _channel = IOWebSocketChannel.connect(
-      uri,
+    await _open();
+  }
+
+  /// Відкрити з'єднання й надіслати setup. З [resumeHandle] сервер
+  /// відновлює попередню сесію замість нової.
+  Future<void> _open({String? resumeHandle}) async {
+    final channel = IOWebSocketChannel.connect(
+      _uri,
       headers: {'x-goog-api-key': apiKey},
+      connectTimeout: _connectTimeout,
     );
-    await _channel!.ready;
-    _sub = _channel!.stream.listen(
+    await channel.ready;
+    if (_closedByUs) {
+      unawaited(_discard(channel, null));
+      return;
+    }
+    _channel = channel;
+    _setupComplete = false;
+    final setupDone = Completer<bool>();
+    _setupDone = setupDone;
+    _sub = channel.stream.listen(
       _onMessage,
       onError: (Object err) {
-        _eventsController.add(
-          QuestTransportEvent(QuestEventKind.error, text: 'Gemini: $err'),
-        );
+        if (!identical(channel, _channel)) return; // уже замінене з'єднання
+        _onConnectionLost(channel, error: err);
       },
       onDone: () {
-        // Код і причина закриття — єдина діагностика, коли сервер приймає
-        // з'єднання і тут же рве його сам (типово для недійсного API-ключа:
-        // Gemini Live відповідає закриттям із поясненням, а не HTTP-помилкою).
-        final code = _channel?.closeCode;
-        final reason = _channel?.closeReason?.trim() ?? '';
-        _eventsController.add(
-          QuestTransportEvent(
-            QuestEventKind.closed,
-            text: code == null && reason.isEmpty
-                ? null
-                : 'код ${code ?? "?"}${reason.isEmpty ? "" : ": $reason"}',
-          ),
-        );
+        if (!identical(channel, _channel) || _closedByUs) return;
+        _onConnectionLost(channel);
       },
       cancelOnError: false,
     );
 
-    _send({'setup': _setupMessage()});
+    _send({'setup': _setupMessage(resumeHandle: resumeHandle)});
   }
 
-  Map<String, dynamic> _setupMessage() {
+  /// Тихо прибрати з'єднання, яке нам більше не потрібне.
+  Future<void> _discard(
+    WebSocketChannel? channel,
+    StreamSubscription? sub,
+  ) async {
+    try {
+      await sub?.cancel();
+    } catch (_) {}
+    try {
+      await channel?.sink.close();
+    } catch (_) {}
+  }
+
+  /// Поточне з'єднання померло не з нашої волі. Якщо є handle — відновлюємо
+  /// сесію; якщо немає (сервер відкинув setup, напр. через недійсний ключ,
+  /// або впав ще до першого `sessionResumptionUpdate`) — повідомляємо
+  /// контролеру код і причину закриття, як і раніше.
+  void _onConnectionLost(WebSocketChannel channel, {Object? error}) {
+    final code = channel.closeCode;
+    final reason = channel.closeReason?.trim() ?? '';
+    final parts = <String>[
+      if (error != null) '$error',
+      if (code != null || reason.isNotEmpty)
+        'код ${code ?? "?"}${reason.isEmpty ? "" : ": $reason"}',
+    ];
+    final detail = parts.isEmpty ? null : parts.join('; ');
+
+    final setupDone = _setupDone;
+    if (setupDone != null && !setupDone.isCompleted) setupDone.complete(false);
+
+    if (_reconnecting) return; // цикл відновлення сам розбереться
+    if (_resumeHandle == null) {
+      _emit(QuestTransportEvent(QuestEventKind.closed, text: detail));
+      return;
+    }
+    unawaited(
+      _reconnect(
+        "з'єднання обірвалось${detail == null ? '' : ' ($detail)'}",
+      ),
+    );
+  }
+
+  /// Перепід'єднатися з останнім handle. Кілька спроб із наростаючою
+  /// паузою — мережа в парку може зникати на секунди при перемиканні
+  /// wifi/4g. Якщо не вдалося зовсім — лише тоді квест завершується.
+  Future<void> _reconnect(String why) async {
+    if (_reconnecting || _closedByUs) return;
+    _reconnecting = true;
+    // Старе з'єднання від'єднуємо одразу: його onDone/onError більше не
+    // наша справа (гарантує перевірка identical() у слухачах).
+    final old = _channel;
+    final oldSub = _sub;
+    _channel = null;
+    _sub = null;
+    _setupComplete = false;
+    unawaited(_discard(old, oldSub));
+
+    try {
+      for (var attempt = 1; attempt <= _reconnectAttempts; attempt++) {
+        if (_closedByUs) return;
+        try {
+          await _open(resumeHandle: _resumeHandle);
+          if (_closedByUs) return; // квест зупинили, поки ми під'єднувались
+          final done = _setupDone;
+          final ok = done != null && await done.future.timeout(_setupTimeout);
+          if (!ok) throw StateError('setup не завершився');
+          _emit(
+            QuestTransportEvent(
+              QuestEventKind.info,
+              text:
+                  "З'єднання з Gemini відновлено ($why; спроба $attempt) — "
+                  'розмова триває з того ж місця.',
+            ),
+          );
+          return;
+        } catch (_) {
+          final c = _channel;
+          final s = _sub;
+          _channel = null;
+          _sub = null;
+          _setupComplete = false;
+          unawaited(_discard(c, s));
+          if (attempt < _reconnectAttempts) {
+            await Future<void>.delayed(Duration(seconds: attempt));
+          }
+        }
+      }
+      _emit(
+        QuestTransportEvent(
+          QuestEventKind.closed,
+          text:
+              "не вдалося відновити з'єднання після $_reconnectAttempts "
+              'спроб ($why)',
+        ),
+      );
+    } finally {
+      _reconnecting = false;
+    }
+  }
+
+  Map<String, dynamic> _setupMessage({String? resumeHandle}) {
     var voice = character.voice.trim();
     if (!kGeminiVoiceLabels.containsKey(voice)) voice = kDefaultGeminiVoice;
 
@@ -123,6 +267,9 @@ class GeminiTransport implements QuestTransport {
       'inputAudioTranscription': {},
       'outputAudioTranscription': {},
       'contextWindowCompression': {'slidingWindow': {}},
+      // Просимо сервер видавати handle для відновлення; з handle —
+      // відновлюємо попередню сесію замість нової.
+      'sessionResumption': resumeHandle == null ? {} : {'handle': resumeHandle},
     };
   }
 
@@ -220,10 +367,27 @@ class GeminiTransport implements QuestTransport {
     if (msg.containsKey('setupComplete')) {
       if (!_setupComplete) {
         _setupComplete = true;
-        _eventsController.add(const QuestTransportEvent(QuestEventKind.ready));
-        _sendGreeting();
+        final done = _setupDone;
+        if (done != null && !done.isCompleted) done.complete(true);
+        if (!_everReady) {
+          _everReady = true;
+          _emit(const QuestTransportEvent(QuestEventKind.ready));
+          _sendGreeting();
+        } else {
+          _flushPendingAudio();
+        }
       }
       return;
+    }
+
+    final resumption = msg['sessionResumptionUpdate'];
+    if (resumption is Map) {
+      final handle = resumption['newHandle'];
+      if (resumption['resumable'] == true &&
+          handle is String &&
+          handle.isNotEmpty) {
+        _resumeHandle = handle;
+      }
     }
 
     final serverContent = msg['serverContent'];
@@ -232,12 +396,19 @@ class GeminiTransport implements QuestTransport {
     }
 
     if (msg.containsKey('goAway')) {
-      _eventsController.add(
-        const QuestTransportEvent(
-          QuestEventKind.closed,
-          text: 'сервер попросив завершити сесію (goAway)',
-        ),
-      );
+      // Сервер попереджає, що незабаром закриє ЦЕ з'єднання (ліміт ~10 хв).
+      // Якщо handle уже є — перепід'єднуємось одразу, не чекаючи обриву;
+      // якщо ще немає — дочекаємось onDone: раптом handle прийде до того.
+      final goAway = msg['goAway'];
+      final timeLeft = goAway is Map ? goAway['timeLeft'] : null;
+      if (_resumeHandle != null) {
+        unawaited(
+          _reconnect(
+            "сервер оголосив закриття з'єднання (goAway"
+            "${timeLeft == null ? '' : ', лишалось $timeLeft'})",
+          ),
+        );
+      }
     }
   }
 
@@ -254,7 +425,7 @@ class GeminiTransport implements QuestTransport {
               if (data is String && data.isNotEmpty) {
                 final decoded = base64Decode(data);
                 _turnAudioBytes += decoded.length;
-                _audioController.add(decoded);
+                if (!_audioController.isClosed) _audioController.add(decoded);
               }
             }
           }
@@ -266,7 +437,7 @@ class GeminiTransport implements QuestTransport {
     if (inputTranscription is Map) {
       final t = inputTranscription['text'];
       if (t is String && t.isNotEmpty) {
-        _eventsController.add(
+        _emit(
           QuestTransportEvent(QuestEventKind.userTranscriptDelta, text: t),
         );
       }
@@ -277,22 +448,18 @@ class GeminiTransport implements QuestTransport {
       final t = outputTranscription['text'];
       if (t is String && t.isNotEmpty) {
         _turnTextChars += t.length;
-        _eventsController.add(
+        _emit(
           QuestTransportEvent(QuestEventKind.agentTranscriptDelta, text: t),
         );
       }
     }
 
     if (serverContent['interrupted'] == true) {
-      _eventsController.add(
-        const QuestTransportEvent(QuestEventKind.interrupted),
-      );
+      _emit(const QuestTransportEvent(QuestEventKind.interrupted));
     }
 
     if (serverContent['turnComplete'] == true) {
-      _eventsController.add(
-        const QuestTransportEvent(QuestEventKind.turnComplete),
-      );
+      _emit(const QuestTransportEvent(QuestEventKind.turnComplete));
       _onTurnComplete();
     }
   }
@@ -303,7 +470,13 @@ class GeminiTransport implements QuestTransport {
 
   @override
   void sendAudio(Uint8List pcm16) {
-    if (!_setupComplete) return;
+    if (!_setupComplete) {
+      // До першого setup мікрофон ще не ввімкнено (пайплайн стартує на
+      // `ready`), тож сюди потрапляє лише голос під час переп'єднання —
+      // притримуємо кілька секунд, щоб не обірвати відповідь дитини.
+      if (_everReady) _bufferPendingAudio(pcm16);
+      return;
+    }
     _send({
       'realtime_input': {
         'audio': {
@@ -314,10 +487,30 @@ class GeminiTransport implements QuestTransport {
     });
   }
 
+  void _bufferPendingAudio(Uint8List pcm16) {
+    _pendingAudio.add(pcm16);
+    _pendingAudioBytes += pcm16.length;
+    while (_pendingAudioBytes > _maxPendingAudioBytes && _pendingAudio.isNotEmpty) {
+      _pendingAudioBytes -= _pendingAudio.removeAt(0).length;
+    }
+  }
+
+  void _flushPendingAudio() {
+    final chunks = List<Uint8List>.from(_pendingAudio);
+    _pendingAudio.clear();
+    _pendingAudioBytes = 0;
+    for (final chunk in chunks) {
+      sendAudio(chunk);
+    }
+  }
+
   @override
   Future<void> close() async {
+    _closedByUs = true;
     await _sub?.cancel();
-    await _channel?.sink.close();
+    try {
+      await _channel?.sink.close();
+    } catch (_) {}
     await _eventsController.close();
     await _audioController.close();
   }
