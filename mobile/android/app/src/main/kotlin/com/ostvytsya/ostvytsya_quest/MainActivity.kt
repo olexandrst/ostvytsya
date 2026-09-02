@@ -226,6 +226,31 @@ class MainActivity : FlutterActivity() {
                     "listSessionRecordings" -> {
                         result.success(SessionRecordingsStore.list(applicationContext))
                     }
+                    "sessionLogCreate" -> {
+                        val name = call.argument<String>("name")
+                        result.success(
+                            if (name == null) null
+                            else SessionLogsStore.create(applicationContext, name)?.toString()
+                        )
+                    }
+                    "sessionLogAppend" -> {
+                        val uri = call.argument<String>("uri")
+                        val text = call.argument<String>("text")
+                        result.success(
+                            uri != null && text != null &&
+                                SessionLogsStore.append(applicationContext, Uri.parse(uri), text)
+                        )
+                    }
+                    "listSessionLogs" -> {
+                        result.success(SessionLogsStore.list(applicationContext))
+                    }
+                    "readSessionLog" -> {
+                        val uri = call.argument<String>("uri")
+                        result.success(
+                            if (uri == null) null
+                            else SessionLogsStore.read(applicationContext, Uri.parse(uri))
+                        )
+                    }
                     "copyRecordingToCache" -> {
                         val uri = call.argument<String>("uri")
                         val name = call.argument<String>("name") ?: "quest.m4a"

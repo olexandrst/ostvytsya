@@ -252,7 +252,28 @@ class _QuestScreenState extends State<QuestScreen> {
                                               ).colorScheme.secondaryContainer),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
-                                child: Text(line.text),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(line.text),
+                                    const SizedBox(height: 2),
+                                    // Таймкод кожного рядка — для розбору
+                                    // проблем «коли саме» важить не менше,
+                                    // ніж «що саме».
+                                    Text(
+                                      line.timeLabel,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.outline,
+                                          ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             );
                           },

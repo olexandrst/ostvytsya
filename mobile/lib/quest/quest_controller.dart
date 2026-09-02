@@ -3,12 +3,16 @@ import 'dart:async';
 import '../constants.dart';
 import '../models/character.dart';
 import '../services/character_store.dart';
+import '../services/session_logger.dart';
 import '../services/session_recorder.dart';
 import '../services/settings_store.dart';
 import 'audio_pipeline.dart';
+import 'transcript_line.dart';
 import 'transcript_utils.dart';
 import 'transport.dart';
 import 'wake_gate.dart';
+
+export 'transcript_line.dart';
 
 enum QuestPhase { listening, connecting, running, restarting, stopped }
 
@@ -20,13 +24,6 @@ class QuestStatusUpdate {
   final int runCount;
 
   const QuestStatusUpdate(this.phase, {this.lastOutcome, this.runCount = 0});
-}
-
-class TranscriptLine {
-  final String who; // 'user' | 'agent' | 'system'
-  final String text;
-
-  const TranscriptLine(this.who, this.text);
 }
 
 /// Веде один персонаж по колу «сплю → чую кодове слово → квест →
@@ -45,14 +42,10 @@ class QuestController {
     // цього мовчазна відсутність активації виглядає однаково і при
     // непрацюючому мікрофоні/розпізнаванні, і при тому, що просто ще ніхто
     // не сказав кодове слово.
-    wakeGate.diagnostics.listen((msg) {
-      _transcriptCtrl.add(TranscriptLine('system', msg));
-    });
+    wakeGate.diagnostics.listen((msg) => _say('system', msg));
     // Так само для вибору аудіо-пристрою під час самого квесту — щоб було
     // видно, чи автопідбір справді бачить і обирає зовнішній мікрофон.
-    audio.diagnostics.listen((msg) {
-      _transcriptCtrl.add(TranscriptLine('system', msg));
-    });
+    audio.diagnostics.listen((msg) => _say('system', msg));
   }
 
   /// Не final: термінал може тижнями стояти на цьому екрані, а персонажа тим
@@ -65,6 +58,7 @@ class QuestController {
   final AudioPipeline audio = AudioPipeline();
   final WakeGateService wakeGate = WakeGateService();
   final SessionRecorder _recorder = SessionRecorder();
+  final SessionLogger _logger = SessionLogger();
   final SettingsStore _settings = SettingsStore();
 
   final _statusCtrl = StreamController<QuestStatusUpdate>.broadcast();
@@ -72,6 +66,11 @@ class QuestController {
 
   Stream<QuestStatusUpdate> get statusStream => _statusCtrl.stream;
   Stream<TranscriptLine> get transcriptStream => _transcriptCtrl.stream;
+
+  /// Останні події з фази очікування кодового слова — потрапляють у журнал
+  /// наступної сесії як преамбула (що саме почув Vosk, який мікрофон обрано).
+  final _preWake = <TranscriptLine>[];
+  static const _preWakeMax = 15;
 
   bool _stopRequested = false;
   bool _running = false;
@@ -82,6 +81,25 @@ class QuestController {
   void Function()? _abortCurrentRun;
 
   bool get isRunning => _running;
+
+  /// ЄДИНИЙ шлях будь-якого рядка транскрипту/діагностики: час появи,
+  /// екран і текстовий журнал сесії (або преамбула, якщо сесія ще не
+  /// почалась). Контролери можуть бути вже закриті (екран пішов, а цикл ще
+  /// дозавершується) — тоді рядок просто не показуємо.
+  void _say(String who, String text) {
+    final line = TranscriptLine(who, text);
+    if (!_transcriptCtrl.isClosed) _transcriptCtrl.add(line);
+    if (_logger.isActive) {
+      _logger.log(line);
+    } else {
+      _preWake.add(line);
+      if (_preWake.length > _preWakeMax) _preWake.removeAt(0);
+    }
+  }
+
+  void _status(QuestStatusUpdate update) {
+    if (!_statusCtrl.isClosed) _statusCtrl.add(update);
+  }
 
   /// Запустити нескінченний цикл «сплю (чекаю кодове слово) → квест →
   /// перемога/тайм-аут → пауза → знову сплю». Повертається лише після
@@ -94,9 +112,7 @@ class QuestController {
 
     while (!_stopRequested) {
       await _refreshCharacter();
-      _statusCtrl.add(
-        QuestStatusUpdate(QuestPhase.listening, runCount: _runCount),
-      );
+      _status(QuestStatusUpdate(QuestPhase.listening, runCount: _runCount));
       bool woke;
       try {
         woke = await wakeGate.waitForWake(
@@ -104,9 +120,7 @@ class QuestController {
           isStopRequested: () => _stopRequested,
         );
       } catch (e) {
-        _transcriptCtrl.add(
-          TranscriptLine('system', 'Розпізнавання кодового слова: $e'),
-        );
+        _say('system', 'Розпізнавання кодового слова: $e');
         woke = false;
         if (!_stopRequested) {
           await Future<void>.delayed(
@@ -120,19 +134,26 @@ class QuestController {
       }
 
       _runCount++;
-      _statusCtrl.add(
-        QuestStatusUpdate(QuestPhase.connecting, runCount: _runCount),
-      );
-      // Запис починається тут — рівно в момент, коли Vosk почув кодове
-      // слово, — а не пізніше (напр. лише після під'єднання до транспорту),
-      // щоб у файлі лишався весь квест від самого початку. Перемикається в
-      // налаштуваннях (увімкнено за замовчуванням).
+      _status(QuestStatusUpdate(QuestPhase.connecting, runCount: _runCount));
+      final startedAt = DateTime.now();
+      // Спільне ім'я для аудіо (.m4a) і журналу (.txt) цієї сесії.
+      final baseName = newSessionBaseName();
+      // Журнал і запис починаються тут — рівно в момент, коли Vosk почув
+      // кодове слово, — а не пізніше (напр. лише після під'єднання до
+      // транспорту), щоб у файлах лишався весь квест від самого початку.
+      // Запис аудіо перемикається в налаштуваннях (увімкнено за
+      // замовчуванням); журнал пишеться завжди.
       final recording = await _settings.getSessionRecordingEnabled();
+      await _logger.start(
+        baseName,
+        header: await _logHeader(startedAt, recording ? '$baseName.m4a' : null),
+        preamble: List<TranscriptLine>.from(_preWake),
+      );
+      _preWake.clear();
+      _say('system', 'Журнал сесії: ${_logger.location}');
       if (recording) {
-        await _recorder.start();
-        _transcriptCtrl.add(
-          TranscriptLine('system', 'Запис сесії: ${_recorder.currentPath}'),
-        );
+        await _recorder.start(baseName);
+        _say('system', 'Запис сесії: ${_recorder.currentPath}');
       }
       final outcome = await _runOnce();
       await _recorder.stop();
@@ -144,18 +165,23 @@ class QuestController {
         final agentS = _recorder.lastAgentSeconds.toStringAsFixed(1);
         final peak = (_recorder.lastMicPeak * 100).toStringAsFixed(0);
         final err = _recorder.lastError;
-        _transcriptCtrl.add(
-          TranscriptLine(
-            'system',
-            // ignore: unnecessary_brace_in_string_interps
-            'Запис: голос дитини ${micS}с (гучність $peak%), '
-            // ignore: unnecessary_brace_in_string_interps
-            'голос персонажа ${agentS}с.${err == null ? '' : ' Помилка: $err'}',
-          ),
+        _say(
+          'system',
+          // ignore: unnecessary_brace_in_string_interps
+          'Запис: голос дитини ${micS}с (гучність $peak%), '
+          // ignore: unnecessary_brace_in_string_interps
+          'голос персонажа ${agentS}с.${err == null ? '' : ' Помилка: $err'}',
         );
       }
+      final durationS = DateTime.now().difference(startedAt).inSeconds;
+      _say(
+        'system',
+        'Підсумок спроби №$_runCount: ${_outcomeLabel(outcome)}, '
+        'тривалість ${durationS ~/ 60} хв ${durationS % 60} с.',
+      );
+      await _logger.stop();
       if (_stopRequested) break;
-      _statusCtrl.add(
+      _status(
         QuestStatusUpdate(
           QuestPhase.restarting,
           lastOutcome: outcome,
@@ -169,8 +195,44 @@ class QuestController {
 
     await audio.dispose();
     await wakeGate.dispose();
-    _statusCtrl.add(QuestStatusUpdate(QuestPhase.stopped, runCount: _runCount));
+    _status(QuestStatusUpdate(QuestPhase.stopped, runCount: _runCount));
     _running = false;
+  }
+
+  /// Службова шапка журналу сесії — усе, що знадобиться при розборі
+  /// проблеми без доступу до самого телефона.
+  Future<List<String>> _logHeader(DateTime startedAt, String? audioName) async {
+    String two(int n) => n.toString().padLeft(2, '0');
+    final d = startedAt;
+    final voice = character.provider == 'google'
+        ? character.voice
+        : character.openaiVoice;
+    return [
+      'Оствиця — журнал сесії квесту',
+      'Початок: ${d.year}-${two(d.month)}-${two(d.day)} '
+          '${two(d.hour)}:${two(d.minute)}:${two(d.second)}',
+      'Персонаж: ${character.displayName} (${character.id}), '
+          'провайдер ${character.provider}, голос $voice',
+      'Кодове слово: ${character.effectiveWakeWords.join(', ')} · '
+          'слово перемоги: ${character.winWord}',
+      'Спроба №$_runCount',
+      'Термінал: ${await _settings.getInstanceId()}',
+      'Версія застосунку: ${kAppVersion.isEmpty ? '—' : kAppVersion}',
+      'Запис аудіо: ${audioName ?? 'вимкнено в налаштуваннях'}',
+    ];
+  }
+
+  String _outcomeLabel(QuestOutcome outcome) {
+    switch (outcome) {
+      case QuestOutcome.won:
+        return 'перемога';
+      case QuestOutcome.timeout:
+        return 'тайм-аут';
+      case QuestOutcome.error:
+        return 'помилка';
+      case QuestOutcome.aborted:
+        return 'зупинено вручну';
+    }
   }
 
   /// Підхопити з диска новішу версію персонажа (її могла принести
@@ -184,11 +246,9 @@ class QuestController {
       final fresh = await CharacterStore().read(character.id);
       if (fresh != null && fresh.updatedAt > character.updatedAt) {
         character = fresh;
-        _transcriptCtrl.add(
-          const TranscriptLine(
-            'system',
-            'Персонажа оновлено із синхронізації — застосовано нову версію.',
-          ),
+        _say(
+          'system',
+          'Персонажа оновлено із синхронізації — застосовано нову версію.',
         );
       }
     } catch (_) {
@@ -229,12 +289,8 @@ class QuestController {
     final eventsSub = transport.events.listen((evt) {
       switch (evt.kind) {
         case QuestEventKind.ready:
-          _statusCtrl.add(
-            QuestStatusUpdate(QuestPhase.running, runCount: _runCount),
-          );
-          _transcriptCtrl.add(
-            const TranscriptLine('system', 'Плеєр голосу: ініціалізація...'),
-          );
+          _status(QuestStatusUpdate(QuestPhase.running, runCount: _runCount));
+          _say('system', 'Плеєр голосу: ініціалізація...');
           audio
               .start(
                 inputSampleRate: transport.inputSampleRate,
@@ -247,12 +303,10 @@ class QuestController {
                 },
               )
               .then((_) {
-                _transcriptCtrl.add(
-                  const TranscriptLine('system', 'Плеєр голосу: готовий.'),
-                );
+                _say('system', 'Плеєр голосу: готовий.');
               })
               .catchError((Object e) {
-                _transcriptCtrl.add(TranscriptLine('system', 'Мікрофон: $e'));
+                _say('system', 'Мікрофон: $e');
                 finish(QuestOutcome.error);
               });
           break;
@@ -271,18 +325,16 @@ class QuestController {
           break;
         case QuestEventKind.turnComplete:
           if (!loggedFirstAudioChunk) {
-            _transcriptCtrl.add(
-              const TranscriptLine(
-                'system',
-                'Хід завершився без жодного шматка аудіо від Gemini.',
-              ),
+            _say(
+              'system',
+              'Хід завершився без жодного шматка аудіо від Gemini.',
             );
           }
           if (userBuf.trim().isNotEmpty) {
-            _transcriptCtrl.add(TranscriptLine('user', userBuf.trim()));
+            _say('user', userBuf.trim());
           }
           if (modelBuf.trim().isNotEmpty) {
-            _transcriptCtrl.add(TranscriptLine('agent', modelBuf.trim()));
+            _say('agent', modelBuf.trim());
           }
           userBuf = '';
           modelBuf = '';
@@ -295,10 +347,10 @@ class QuestController {
         case QuestEventKind.interrupted:
           break;
         case QuestEventKind.info:
-          _transcriptCtrl.add(TranscriptLine('system', evt.text ?? ''));
+          _say('system', evt.text ?? '');
           break;
         case QuestEventKind.error:
-          _transcriptCtrl.add(TranscriptLine('system', evt.text ?? 'помилка'));
+          _say('system', evt.text ?? 'помилка');
           finish(QuestOutcome.error);
           break;
         case QuestEventKind.closed:
@@ -306,13 +358,11 @@ class QuestController {
           // API-ключ), помирала БЕЗ ЖОДНОГО сліду в діагностиці — на екрані
           // просто йшов «Перезапуск квесту». Тому причину показуємо завжди.
           if (!_stopRequested) {
-            _transcriptCtrl.add(
-              TranscriptLine(
-                'system',
-                evt.text == null
-                    ? "Сервер закрив з'єднання без пояснення причини."
-                    : "Сервер закрив з'єднання: ${evt.text}",
-              ),
+            _say(
+              'system',
+              evt.text == null
+                  ? "Сервер закрив з'єднання без пояснення причини."
+                  : "Сервер закрив з'єднання: ${evt.text}",
             );
           }
           finish(_stopRequested ? QuestOutcome.aborted : QuestOutcome.error);
@@ -324,11 +374,9 @@ class QuestController {
       lastVoice = DateTime.now();
       if (!loggedFirstAudioChunk) {
         loggedFirstAudioChunk = true;
-        _transcriptCtrl.add(
-          TranscriptLine(
-            'system',
-            'Отримано перший шматок голосу персонажа (${chunk.length} байт).',
-          ),
+        _say(
+          'system',
+          'Отримано перший шматок голосу персонажа (${chunk.length} байт).',
         );
       }
       unawaited(audio.playAgentChunk(chunk, transport.outputSampleRate));
@@ -362,9 +410,7 @@ class QuestController {
     try {
       await transport.connect();
     } catch (e) {
-      _transcriptCtrl.add(
-        TranscriptLine('system', "Не вдалося під'єднатися: $e"),
-      );
+      _say('system', "Не вдалося під'єднатися: $e");
       finish(QuestOutcome.error);
     }
 

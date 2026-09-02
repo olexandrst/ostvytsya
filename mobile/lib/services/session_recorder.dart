@@ -56,17 +56,17 @@ class SessionRecorder {
 
   /// Почати новий запис (новий файл). Якщо запис уже йде — нічого не робить.
   ///
+  /// [baseName] — спільна основа імені сесії (див. newSessionBaseName у
+  /// session_logger.dart): аудіо стає `<baseName>.m4a`, а текстовий журнал
+  /// тієї самої сесії — `<baseName>.txt`, щоб їх легко було зіставити.
+  ///
   /// Запис іде у спільну медіатеку пристрою (`Music/Оствиця`), щоб пережити
   /// видалення застосунку; якщо система застара для MediaStore — у теку
   /// застосунку, як раніше.
-  Future<void> start() async {
+  Future<void> start(String baseName) async {
     if (_active) return;
     final legacyDir = await RecordingsStore.legacyDirectory();
-    final ts = DateTime.now().toIso8601String().replaceAll(
-      RegExp(r'[^0-9]'),
-      '',
-    );
-    final name = 'quest_$ts.m4a';
+    final name = '$baseName.m4a';
     final fallbackPath = '${legacyDir.path}/$name';
     final uri = await _encoder.start(name, fallbackPath, _targetRate);
     _path = uri ?? fallbackPath;

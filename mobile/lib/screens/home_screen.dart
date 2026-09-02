@@ -6,6 +6,7 @@ import '../services/character_store.dart';
 import '../services/crash_log.dart';
 import '../services/vosk_model_downloader.dart';
 import 'character_edit_screen.dart';
+import 'logs_screen.dart';
 import 'quest_screen.dart';
 import 'recordings_screen.dart';
 import 'settings_screen.dart';
@@ -306,6 +307,14 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const RecordingsScreen()),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Журнали сесій',
+            icon: const Icon(Icons.receipt_long),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const LogsScreen()),
             ),
           ),
           IconButton(
