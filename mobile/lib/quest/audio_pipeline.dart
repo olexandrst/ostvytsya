@@ -368,10 +368,23 @@ class AudioPipeline {
     if (!_opened) return;
     if (!_playerReady) {
       _pendingChunks.add((pcm16, sampleRate));
+      // Буфер обмежений: якщо плеєр чомусь так і не піднявся, голос
+      // персонажа не має накопичуватись у пам'яті без кінця (30 хвилин
+      // мовлення — це ~86 МБ). Лишаємо хвіст, найстаріше викидаємо.
+      var total = 0;
+      for (final (chunk, _) in _pendingChunks) {
+        total += chunk.length;
+      }
+      while (total > _maxPendingBytes && _pendingChunks.length > 1) {
+        total -= _pendingChunks.removeAt(0).$1.length;
+      }
       return;
     }
     await _feedNow(pcm16, sampleRate);
   }
+
+  /// ~60 с голосу персонажа (24 кГц, PCM16) — стеля черги [_pendingChunks].
+  static const _maxPendingBytes = 24000 * 2 * 60;
 
   Future<void> _feedNow(Uint8List pcm16, int sampleRate) async {
     _everFed = true;

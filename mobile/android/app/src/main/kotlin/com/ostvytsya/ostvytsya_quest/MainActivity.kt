@@ -175,6 +175,9 @@ class MainActivity : FlutterActivity() {
                     "collectTelemetry" -> {
                         result.success(DeviceTelemetry.collect(applicationContext))
                     }
+                    "memoryInfo" -> {
+                        result.success(DeviceTelemetry.memory(applicationContext))
+                    }
                     "scoStart" -> {
                         result.success(CommunicationRouter.start(applicationContext))
                     }

@@ -1,6 +1,7 @@
 package com.ostvytsya.ostvytsya_quest
 
 import android.Manifest
+import android.app.ActivityManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
@@ -10,6 +11,8 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Debug
+import android.os.Process
 import android.telephony.TelephonyManager
 import android.util.Log
 
@@ -32,8 +35,36 @@ object DeviceTelemetry {
             "phone_number" to phoneNumber(context),
             "bluetooth" to bluetoothDevices(context),
             "latitude" to location?.latitude,
-            "longitude" to location?.longitude
+            "longitude" to location?.longitude,
+            "memory" to memory(context)
         )
+    }
+
+    /**
+     * Пам'ять процесу (PSS, нативна купа, Java-купа) і пристрою (вільно /
+     * усього, чи система вже в режимі нестачі). Усе в МБ. Для журналу сесії:
+     * коли застосунок убиває LOW_MEMORY, ці цифри показують, чи росте саме
+     * наш процес від сесії до сесії (витік), чи пристрій загалом на межі.
+     */
+    fun memory(context: Context): Map<String, Any?> = try {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val info = ActivityManager.MemoryInfo()
+        am.getMemoryInfo(info)
+        val pss = am.getProcessMemoryInfo(intArrayOf(Process.myPid())).firstOrNull()
+        val runtime = Runtime.getRuntime()
+        val mb = 1024L * 1024L
+        mapOf(
+            "process_pss_mb" to (pss?.totalPss ?: 0) / 1024, // totalPss — у КБ
+            "native_heap_mb" to Debug.getNativeHeapAllocatedSize() / mb,
+            "java_heap_mb" to (runtime.totalMemory() - runtime.freeMemory()) / mb,
+            "device_avail_mb" to info.availMem / mb,
+            "device_total_mb" to info.totalMem / mb,
+            "device_threshold_mb" to info.threshold / mb,
+            "device_low_memory" to info.lowMemory
+        )
+    } catch (err: Throwable) {
+        Log.w(TAG, "Знімок пам'яті недоступний", err)
+        emptyMap()
     }
 
     /**

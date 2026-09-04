@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
@@ -29,6 +28,12 @@ class VoskDownloadProgress {
 /// каталог, що й ModelLoader (${ApplicationDocumentsDirectory}/models/<ім'я>),
 /// тож пізніші виклики ModelLoader().loadFromNetwork() (з WakeGateService)
 /// бачать той самий кеш і не качають повторно.
+///
+/// Усе — ПОТОКОМ ЧЕРЕЗ ДИСК, а не через пам'ять: архів на 133+ МБ пишеться
+/// у файл шматками й розпаковується з файлу (extractFileToDisk). Раніше він
+/// цілком сидів у пам'яті, а розпакування в ізоляті ще й копіювало його
+/// туди повністю — пік ~400 МБ на бюджетному телефоні, якраз коли модель
+/// ще не завантажена і система й так під тиском.
 class VoskModelDownloader {
   String get modelName => path.basenameWithoutExtension(kVoskModelUrl);
 
@@ -46,7 +51,7 @@ class VoskModelDownloader {
   }) async {
     if (await isAlreadyDownloaded()) return;
 
-    final bytes = await _obtainArchiveBytes(onProgress);
+    final archiveFile = await _obtainArchiveFile(onProgress);
 
     final decompressionPath = path.join(
       (await getApplicationDocumentsDirectory()).path,
@@ -54,12 +59,11 @@ class VoskModelDownloader {
     );
     final targetDir = Directory(path.join(decompressionPath, modelName));
     try {
-      final archive = ZipDecoder().decodeBytes(bytes);
       // Розпакування великого архіву — важка синхронна робота, тож в
-      // окремому ізоляті, як і в оригінальному ModelLoader._extractModel.
+      // окремому ізоляті; туди йдуть лише два шляхи, а не сам архів.
       await compute(
-        (_) => extractArchiveToDisk(archive, decompressionPath),
-        null,
+        (args) => extractFileToDisk(args.$1, args.$2),
+        (archiveFile.path, decompressionPath),
       );
     } catch (_) {
       // Не лишаємо частково розпакований каталог — інакше
@@ -68,36 +72,37 @@ class VoskModelDownloader {
         await targetDir.delete(recursive: true);
       }
       rethrow;
+    } finally {
+      await _safeDelete(archiveFile);
     }
   }
 
-  /// Дістати архів моделі: спершу з локальної копії у спільному сховищі
-  /// (переживає видалення застосунку), і лише якщо її немає — з мережі.
+  /// Дістати архів моделі як файл у тимчасовій теці: спершу з локальної
+  /// копії у спільному сховищі (переживає видалення застосунку), і лише
+  /// якщо її немає — з мережі.
   ///
   /// Саме це рятує 140+ МБ трафіку й хвилини очікування при кожному
   /// перевстановленні APK: сама модель кешується у внутрішній теці, яку
   /// система стирає разом із застосунком, а архів у `Documents/Оствиця` —
   /// ні.
-  Future<Uint8List> _obtainArchiveBytes(
+  Future<File> _obtainArchiveFile(
     void Function(VoskDownloadProgress progress) onProgress,
   ) async {
     final cachedPath = path.join(
       (await getTemporaryDirectory()).path,
       _archiveName,
     );
+    final cached = File(cachedPath);
 
     if (await _backup.fileExists(_archiveName)) {
       // Копіювання йде нативно, потоком — байти не проходять через канал
       // платформи (для 140+ МБ це було б і повільно, і небезпечно
       // для пам'яті).
       if (await _backup.exportFile(_archiveName, cachedPath)) {
-        final file = File(cachedPath);
-        final size = await file.length();
+        final size = await cached.length();
         if (size > 0) {
           onProgress(VoskDownloadProgress(size, size));
-          final bytes = await file.readAsBytes();
-          await _safeDelete(file);
-          return bytes;
+          return cached;
         }
       }
     }
@@ -111,28 +116,29 @@ class VoskModelDownloader {
     }
 
     final total = response.contentLength;
-    final builder = BytesBuilder(copy: false);
     var received = 0;
-    await for (final chunk in response.stream) {
-      builder.add(chunk);
-      received += chunk.length;
-      onProgress(VoskDownloadProgress(received, total));
+    final sink = cached.openWrite();
+    try {
+      await for (final chunk in response.stream) {
+        sink.add(chunk);
+        received += chunk.length;
+        onProgress(VoskDownloadProgress(received, total));
+      }
+      await sink.flush();
+    } finally {
+      await sink.close();
     }
-    final bytes = builder.takeBytes();
 
     // Відкладаємо копію в спільне сховище, щоб наступне встановлення вже
     // нічого не качало. Не вдалося — не біда: модель усе одно розпакується,
     // просто наступного разу доведеться качати знову.
     try {
-      final file = File(cachedPath);
-      await file.writeAsBytes(bytes, flush: true);
       await _backup.importFile(_archiveName, cachedPath);
-      await _safeDelete(file);
     } catch (_) {
       // ignore
     }
 
-    return bytes;
+    return cached;
   }
 
   Future<void> _safeDelete(File file) async {

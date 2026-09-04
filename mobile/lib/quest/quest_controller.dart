@@ -3,6 +3,7 @@ import 'dart:async';
 import '../constants.dart';
 import '../models/character.dart';
 import '../services/character_store.dart';
+import '../services/device_memory.dart';
 import '../services/session_logger.dart';
 import '../services/session_recorder.dart';
 import '../services/settings_store.dart';
@@ -174,6 +175,11 @@ class QuestController {
         );
       }
       final durationS = DateTime.now().difference(startedAt).inSeconds;
+      // Знімок пам'яті наприкінці КОЖНОЇ спроби: якщо цифри процесу ростуть
+      // від спроби до спроби — це витік, і журнали покажуть його раніше, ніж
+      // система вб'є застосунок через LOW_MEMORY.
+      final memory = await DeviceMemory.describe();
+      if (memory != null) _say('system', "Пам'ять: $memory");
       _say(
         'system',
         'Підсумок спроби №$_runCount: ${_outcomeLabel(outcome)}, '
@@ -219,6 +225,7 @@ class QuestController {
       'Термінал: ${await _settings.getInstanceId()}',
       'Версія застосунку: ${kAppVersion.isEmpty ? '—' : kAppVersion}',
       'Запис аудіо: ${audioName ?? 'вимкнено в налаштуваннях'}',
+      "Пам'ять на старті: ${await DeviceMemory.describe() ?? '—'}",
     ];
   }
 

@@ -35,7 +35,19 @@ class WakeGateService {
   final AudioDeviceService _deviceService = AudioDeviceService();
   final SettingsStore _settings = SettingsStore();
   Recognizer? _recognizer;
-  Future<void>? _readyFuture;
+
+  /// Модель і розпізнавач Vosk — ОДНІ НА ВЕСЬ ПРОЦЕС, а не на екземпляр.
+  ///
+  /// ‼️ Це не оптимізація, а виправлення витоку, що вбивало застосунок
+  /// (LOW_MEMORY від системи прямо посеред квесту на Galaxy A27). На Android
+  /// плагін vosk_flutter_service на кожен createModel() створює НОВИЙ
+  /// org.vosk.Model (сотні МБ нативної пам'яті) і кладе його в мапу за
+  /// шляхом, НЕ закриваючи попередній; Model.dispose() на Android — порожній,
+  /// а моделі звільняються лише при від'єднанні Flutter-двигуна. Раніше
+  /// WakeGateService створювався на кожне відкриття екрана квесту й щоразу
+  /// підвантажував модель заново — тож кожен новий квест додавав у пам'ять
+  /// ще одну повну копію моделі, доки система не вбивала процес.
+  static Future<Recognizer>? _sharedRecognizer;
 
   final _diagCtrl = StreamController<String>.broadcast();
 
@@ -45,27 +57,35 @@ class WakeGateService {
   /// відбувається, поки персонаж "спить".
   Stream<String> get diagnostics => _diagCtrl.stream;
 
-  /// Завантажити модель і створити розпізнавач (один раз за весь час
-  /// роботи застосунку — повторні виклики просто чекають той самий Future).
-  Future<void> ensureReady() {
-    return _readyFuture ??= _load();
-  }
-
-  Future<void> _load() async {
-    _diagCtrl.add('Завантажую модель Vosk (один раз, потім кешується)...');
+  /// Підхопити спільний розпізнавач (модель завантажується один раз за
+  /// весь час роботи застосунку — далі всі екземпляри чекають той самий
+  /// Future і отримують той самий об'єкт).
+  Future<void> ensureReady() async {
+    final existing = _sharedRecognizer;
+    if (existing != null) {
+      _recognizer = await existing;
+      return;
+    }
+    _diagCtrl.add('Завантажую модель Vosk (один раз за запуск застосунку)...');
+    final loading = _loadShared();
+    _sharedRecognizer = loading;
     try {
-      final vosk = VoskFlutterPlugin.instance();
-      final modelPath = await ModelLoader().loadFromNetwork(kVoskModelUrl);
-      final model = await vosk.createModel(modelPath);
-      _recognizer = await vosk.createRecognizer(
-        model: model,
-        sampleRate: sampleRate,
-      );
+      _recognizer = await loading;
       _diagCtrl.add('Модель Vosk готова, слухаю мікрофон.');
     } catch (e) {
+      // Невдале завантаження не «заморожуємо» назавжди — наступна спроба
+      // піде знову (напр. після того, як модель докачається).
+      _sharedRecognizer = null;
       _diagCtrl.add('Не вдалося завантажити модель Vosk: $e');
       rethrow;
     }
+  }
+
+  static Future<Recognizer> _loadShared() async {
+    final vosk = VoskFlutterPlugin.instance();
+    final modelPath = await ModelLoader().loadFromNetwork(kVoskModelUrl);
+    final model = await vosk.createModel(modelPath);
+    return vosk.createRecognizer(model: model, sampleRate: sampleRate);
   }
 
   Future<AudioDevice?> _resolveInputDevice() async {
@@ -220,13 +240,14 @@ class WakeGateService {
     }
   }
 
+  /// Розпізнавач НЕ звільняємо — він спільний і живе до кінця процесу
+  /// (див. _sharedRecognizer); reset() на початку кожного waitForWake
+  /// прибирає його стан.
   Future<void> dispose() async {
     try {
       await _recorder.dispose();
     } catch (_) {}
-    try {
-      await _recognizer?.dispose();
-    } catch (_) {}
+    _recognizer = null;
     await _diagCtrl.close();
   }
 }
