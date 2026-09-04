@@ -4,18 +4,25 @@
 хто він, чи йде зараз квест, скільки заряду, де знаходиться. Панель
 показує зведення по всіх терміналах.
 
-Сховище навмисно В ПАМ'ЯТІ, без бази: статус — величина миттєва й
-короткоживуча, історія тут нікому не потрібна, а після перезапуску
-сервера термінали самі відзвітують знову за кілька хвилин. Це прибирає
-цілий клас проблем (міграції, ефемерна файлова система Render тощо).
+Останній статус кожного термінала зберігається в SQLite (таблиця agents
+спільної бази панелі, domovyk_quest/db.py): після перезапуску сервера
+список терміналів на місці одразу, а не «через кілька хвилин, коли самі
+відзвітують». У пам'яті лишається лише кеш для швидкого читання —
+джерело правди в базі.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Optional
+
+from domovyk_quest import db
+
+log = logging.getLogger("ostvytsya.agents")
 
 # Через скільки після останнього звіту вважати термінал офлайн. Звіти йдуть
 # раз на 5 хвилин, тож даємо два пропущені такти плюс запас на мережу.
@@ -93,12 +100,62 @@ class AgentStatus:
         return f"https://www.google.com/maps?q={self.latitude},{self.longitude}"
 
 
+_FIELD_NAMES = {f.name for f in fields(AgentStatus)}
+
+
 class AgentRegistry:
-    """Потокобезпечний реєстр останніх статусів."""
+    """Потокобезпечний реєстр останніх статусів із кешем поверх SQLite."""
 
     def __init__(self) -> None:
         self._agents: dict[str, AgentStatus] = {}
         self._lock = threading.Lock()
+        self._loaded = False
+
+    # ── база ──────────────────────────────────────────────────────────────
+
+    def _ensure_loaded(self) -> None:
+        """Підняти кеш із бази при першому зверненні (не при імпорті —
+        щоб недоступна база не валила імпорт застосунку)."""
+        if self._loaded:
+            return
+        with self._lock:
+            if self._loaded:
+                return
+            try:
+                with db.connect() as conn:
+                    rows = conn.execute(
+                        "SELECT agent_id, received_at, data FROM agents"
+                    ).fetchall()
+                for row in rows:
+                    try:
+                        data = json.loads(row["data"])
+                        data = {k: v for k, v in data.items() if k in _FIELD_NAMES}
+                        data["agent_id"] = str(row["agent_id"])
+                        data["received_at"] = float(row["received_at"])
+                        self._agents[data["agent_id"]] = AgentStatus(**data)
+                    except (TypeError, ValueError):
+                        continue  # пошкоджений рядок не має ламати список
+            except Exception:  # noqa: BLE001 — база не має валити панель
+                log.exception("Не вдалося прочитати статуси терміналів із бази")
+            self._loaded = True
+
+    @staticmethod
+    def _persist(status: AgentStatus, evicted: Optional[str]) -> None:
+        try:
+            with db.connect() as conn:
+                conn.execute(
+                    "INSERT INTO agents (agent_id, received_at, data) VALUES (?, ?, ?) "
+                    "ON CONFLICT(agent_id) DO UPDATE SET received_at = excluded.received_at, "
+                    "data = excluded.data",
+                    (status.agent_id, status.received_at,
+                     json.dumps(asdict(status), ensure_ascii=False)),
+                )
+                if evicted:
+                    conn.execute("DELETE FROM agents WHERE agent_id = ?", (evicted,))
+        except Exception:  # noqa: BLE001 — збій диска не має ламати звіт термінала
+            log.exception("Не вдалося зберегти статус термінала")
+
+    # ── публічне ──────────────────────────────────────────────────────────
 
     def update(self, payload: dict[str, Any]) -> Optional[AgentStatus]:
         """Прийняти звіт. Повертає None, якщо в ньому немає ідентифікатора.
@@ -109,6 +166,7 @@ class AgentRegistry:
         agent_id = _clean_str(payload.get("agent_id"), limit=64)
         if not agent_id:
             return None
+        self._ensure_loaded()
 
         bluetooth: list[dict[str, Any]] = []
         raw_bt = payload.get("bluetooth")
@@ -138,17 +196,21 @@ class AgentRegistry:
             app_version=_clean_str(payload.get("app_version"), limit=40),
         )
 
+        evicted: Optional[str] = None
         with self._lock:
             # Переповнення реєстру: викидаємо той, від якого найдовше нічого
             # не чути, а не щойно доданий.
             if agent_id not in self._agents and len(self._agents) >= MAX_AGENTS:
                 oldest = min(self._agents.values(), key=lambda a: a.received_at)
                 self._agents.pop(oldest.agent_id, None)
+                evicted = oldest.agent_id
             self._agents[agent_id] = status
+        self._persist(status, evicted)
         return status
 
     def all(self) -> list[AgentStatus]:
         """Усі термінали: спершу активні, далі — за свіжістю звіту."""
+        self._ensure_loaded()
         with self._lock:
             agents = list(self._agents.values())
         agents.sort(key=lambda a: (not a.online, -a.received_at))

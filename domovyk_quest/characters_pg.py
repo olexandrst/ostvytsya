@@ -29,7 +29,14 @@ import os
 import threading
 from typing import Any
 
-from .characters import CharacterError, _check_payload, build_character, validate_id
+from .characters import (
+    CharacterError,
+    _check_payload,
+    build_character,
+    read_seed_files,
+    summary,
+    validate_id,
+)
 
 log = logging.getLogger("ostvytsya.characters_pg")
 
@@ -122,21 +129,7 @@ def list_characters() -> list[dict[str, Any]]:
             raw = _row_to_dict(data)
         except (TypeError, ValueError):
             continue  # пошкоджений запис не має ламати весь список
-        provider = (raw.get("provider") or "openai").strip()
-        out.append({
-            "id": char_id,
-            "display_name": raw.get("display_name") or char_id,
-            "provider": provider,
-            "provider_label": "Google Gemini" if provider == "google" else "OpenAI",
-            "voice": raw.get("voice") or "",
-            "openai_voice": raw.get("openai_voice") or "marin",
-            "web_voice": (raw.get("voice") or "Charon") if provider == "google"
-                         else (raw.get("openai_voice") or "marin"),
-            "wake_words": list(raw.get("wake_words") or []),
-            "win_word": raw.get("win_word") or "",
-            "questions": len(raw.get("questions") or []),
-            "custom_prompt": bool((raw.get("system_prompt") or "").strip()),
-        })
+        out.append(summary(char_id, raw))
     return out
 
 
@@ -222,35 +215,18 @@ def seed_from_files_if_empty() -> None:
     «зникли» б одразу після першого ввімкнення storage.render: yes — до першої
     ручної дії в редакторі БД була б порожньою.
     """
-    import yaml
-
-    from .characters import characters_dir
-
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(f"SELECT count(*) FROM {_TABLE}")
         (count,) = cur.fetchone()
         if count:
             return
 
-        directory = characters_dir()
-        if not directory.exists():
-            return
-
         seeded = 0
-        for path in sorted(directory.glob("*.yaml")):
-            try:
-                with path.open("r", encoding="utf-8") as fh:
-                    raw = yaml.safe_load(fh) or {}
-            except (OSError, yaml.YAMLError):
-                continue
-            if not isinstance(raw, dict):
-                continue
-            payload = dict(raw)
-            payload["id"] = path.stem
+        for char_id, payload in read_seed_files():
             cur.execute(f"""
                 INSERT INTO {_TABLE} (id, data) VALUES (%s, %s)
                 ON CONFLICT (id) DO NOTHING
-            """, (path.stem, json.dumps(payload, ensure_ascii=False)))
+            """, (char_id, json.dumps(payload, ensure_ascii=False)))
             seeded += 1
         conn.commit()
         if seeded:

@@ -102,26 +102,50 @@ def _read_top_level_yaml(path_str: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def render_storage_enabled(config_path: Optional[str | os.PathLike] = None) -> bool:
-    """Чи зберігати персонажів веб-режиму в Render Managed PostgreSQL.
+STORAGE_BACKENDS = ("sqlite", "files", "postgresql")
 
-    Читається з config.yaml → storage.render: yes/no. Типово (секції немає,
-    файла немає, або render: no) — стара поведінка: персонажі зберігаються як
-    файли characters/*.yaml, як і раніше.
+_BACKEND_ALIASES = {
+    "postgres": "postgresql", "pg": "postgresql", "render": "postgresql",
+    "yaml": "files", "file": "files", "fs": "files",
+    "sqlite3": "sqlite", "db": "sqlite",
+}
 
-    Це навмисно ЛЕГКА перевірка без повної валідації AppConfig: веб-режим
-    працює з багатьма персонажами одночасно, а не з одним обраним, як консоль,
-    тож переганяти цей прапорець крізь load_config() (який вимагає конкретного
-    character_file) було б зайвою залежністю.
 
-    Результат кешується (config.yaml не перечитується на кожен запит) — зміна
-    значення застосовується після перезапуску, як і решта конфігурації.
+def storage_backend_name(config_path: Optional[str | os.PathLike] = None) -> str:
+    """Де веб-режим зберігає персонажів: "sqlite" (типово), "files" чи "postgresql".
+
+    Джерела, за пріоритетом:
+      1. змінна середовища OSTVYTSYA_STORAGE_BACKEND (зручно на хостингу, де
+         config.yaml — частина репозиторію);
+      2. config.yaml → storage.backend;
+      3. старий прапорець config.yaml → storage.render: yes → "postgresql"
+         (лишено для сумісності);
+      4. інакше — "sqlite".
+
+    Це навмисно ЛЕГКА перевірка: результат кешується (config.yaml не
+    перечитується на кожен запит) — зміна застосовується після перезапуску.
     """
+    explicit = (os.environ.get("OSTVYTSYA_STORAGE_BACKEND") or "").strip().lower()
+    if explicit:
+        explicit = _BACKEND_ALIASES.get(explicit, explicit)
+        if explicit in STORAGE_BACKENDS:
+            return explicit
     path = Path(config_path) if config_path else (
         Path(__file__).resolve().parent.parent / "config.yaml"
     )
     raw = _read_top_level_yaml(str(path))
     storage = raw.get("storage")
     if not isinstance(storage, dict):
-        return False
-    return bool(storage.get("render", False))
+        return "sqlite"
+    backend = str(storage.get("backend") or "").strip().lower()
+    backend = _BACKEND_ALIASES.get(backend, backend)
+    if backend in STORAGE_BACKENDS:
+        return backend
+    if storage.get("render", False):
+        return "postgresql"
+    return "sqlite"
+
+
+def render_storage_enabled(config_path: Optional[str | os.PathLike] = None) -> bool:
+    """Чи персонажі веб-режиму живуть у PostgreSQL (див. storage_backend_name)."""
+    return storage_backend_name(config_path) == "postgresql"

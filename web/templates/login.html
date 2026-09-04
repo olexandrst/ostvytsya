@@ -6,8 +6,9 @@
   <p class="muted" style="margin-top:0">Увійди, щоб керувати персонажами</p>
   {% if not configured %}
     <p class="alert alert-warn">
-      Пароль не налаштовано. Додай <code>OSTVYTSYA_WEB_PASSWORD</code> у файл
-      <code>.env</code> і перезапусти сервер.
+      Адміністратора ще не створено — база панелі недоступна. Перевір
+      <code>OSTVYTSYA_DB_PATH</code> (або права на теку <code>data/</code>)
+      і перезапусти сервер.
     </p>
   {% endif %}
   {% if error %}<p class="alert alert-error">{{ error }}</p>{% endif %}

@@ -39,13 +39,18 @@ services:
         value: gpt-realtime-2.1-mini
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Опційно: постійне сховище персонажів (Render Managed PostgreSQL).
+#  ‼️ Диск на Render ефемерний: база панелі (SQLite, data/ostvytsya.db —
+#  термінали, персонажі з телефонів, адміністратор) зникне при передеплої.
+#  Або прив'яжи Persistent Disk і задай OSTVYTSYA_DB_PATH на нього
+#  (напр. /var/data/ostvytsya.db), або для персонажів редактора увімкни
+#  PostgreSQL нижче (статуси терміналів і адміністратор усе одно лишаться в
+#  SQLite — на диску).
 #
-#  Render сам не має ефекту без двох кроків:
+#  Опційно: персонажі редактора в Render Managed PostgreSQL.
 #    1. розкоментуй блок `databases:` і `envVars: - key: DATABASE_URL` нижче;
-#    2. постав storage.render: yes у config.yaml (замість no).
-#  Без storage.render: yes навіть із прив'язаною базою застосунок і далі
-#  писатиме персонажів у файли — прапорець вмикає БД, а не сама наявність БД.
+#    2. постав storage.backend: postgresql у config.yaml (або змінну
+#       OSTVYTSYA_STORAGE_BACKEND=postgresql у Render → Environment).
+#  Сама наявність бази нічого не вмикає — потрібен саме бекенд.
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # databases:

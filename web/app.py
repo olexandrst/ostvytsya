@@ -53,7 +53,7 @@ from domovyk_quest.characters_store import (  # noqa: E402  (після зава
 )
 from domovyk_quest.prompt import build_system_instruction  # noqa: E402
 
-from .auth import Auth, session_secret
+from .auth import MIN_PASSWORD_LENGTH, Auth, AuthError, session_secret
 from .character_forms import payload_from_form as _payload_from_form
 from .character_forms import resolve_system_prompt
 from .gemini_live import model_name as gemini_model_name, run_quest as run_gemini_quest
@@ -94,6 +94,39 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 auth = Auth()
+
+# Файл із початковим паролем адміністратора — лише коли пароль довелося
+# згенерувати самим (нічого не задано в .env). Зникає після першої зміни
+# пароля в панелі.
+INITIAL_PASSWORD_FILE = PROJECT_ROOT / "data" / "initial-admin-password.txt"
+
+
+def _bootstrap_admin() -> None:
+    """Створити єдиного адміністратора при першому старті."""
+    try:
+        generated = auth.ensure_admin()
+    except Exception:  # noqa: BLE001 — панель має піднятись і сказати, що не так
+        log.exception("Не вдалося створити адміністратора в базі панелі")
+        return
+    if not generated:
+        return
+    try:
+        INITIAL_PASSWORD_FILE.parent.mkdir(parents=True, exist_ok=True)
+        INITIAL_PASSWORD_FILE.write_text(generated + "\n", encoding="utf-8")
+        try:
+            INITIAL_PASSWORD_FILE.chmod(0o600)
+        except OSError:
+            pass
+    except OSError:
+        log.exception("Не вдалося записати початковий пароль у файл")
+    log.warning(
+        "🔑 Створено адміністратора «%s» із ВИПАДКОВИМ паролем: %s  "
+        "(також у %s — зміни його в панелі: /account)",
+        auth.user, generated, INITIAL_PASSWORD_FILE,
+    )
+
+
+_bootstrap_admin()
 
 
 # ── доступ ───────────────────────────────────────────────────────────────────
@@ -151,8 +184,9 @@ async def login_form(request: Request):
 async def login_submit(request: Request, username: str = Form(""),
                        password: str = Form(""), csrf: str = Form("")):
     check_csrf(request, csrf)
-    if auth.check(username, password):
-        request.session["user"] = auth.user
+    authenticated = auth.authenticate(username, password)
+    if authenticated:
+        request.session["user"] = authenticated
         # Новий CSRF-токен після входу (захист від фіксації сесії).
         request.session["csrf"] = secrets.token_urlsafe(32)
         return RedirectResponse(url="/", status_code=HTTP_303_SEE_OTHER)
@@ -169,6 +203,48 @@ async def logout(request: Request, csrf: str = Form("")):
     check_csrf(request, csrf)
     request.session.clear()
     return RedirectResponse(url="/login", status_code=HTTP_303_SEE_OTHER)
+
+
+# ── обліковий запис (зміна пароля) ───────────────────────────────────────────
+
+def _account_page(request: Request, user: str, *, error: Optional[str] = None,
+                  notice: Optional[str] = None, status_code: int = 200):
+    return templates.TemplateResponse(request, "account.html", {
+        "user": user,
+        "csrf": csrf_token(request),
+        "error": error,
+        "notice": notice,
+        "min_length": MIN_PASSWORD_LENGTH,
+    }, status_code=status_code)
+
+
+@app.get("/account", response_class=HTMLResponse)
+async def account_form(request: Request, user: str = Depends(require_login)):
+    return _account_page(request, user)
+
+
+@app.post("/account", response_class=HTMLResponse)
+async def account_submit(request: Request, user: str = Depends(require_login),
+                         current_password: str = Form(""), new_password: str = Form(""),
+                         new_password2: str = Form(""), csrf: str = Form("")):
+    check_csrf(request, csrf)
+    if not auth.authenticate(user, current_password):
+        log.warning("Невдала спроба зміни пароля (логін: %r)", user)
+        return _account_page(request, user, error="Поточний пароль невірний.",
+                             status_code=403)
+    if new_password != new_password2:
+        return _account_page(request, user, error="Нові паролі не збігаються.",
+                             status_code=400)
+    try:
+        auth.set_password(user, new_password)
+    except AuthError as exc:
+        return _account_page(request, user, error=str(exc), status_code=400)
+    # Початковий (згенерований) пароль більше не чинний — файл із ним зайвий.
+    try:
+        INITIAL_PASSWORD_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return _account_page(request, user, notice="Пароль змінено.")
 
 
 # ── сторінки ─────────────────────────────────────────────────────────────────

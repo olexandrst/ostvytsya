@@ -144,6 +144,27 @@ def load_character(char_id: str, root: Optional[Path] = None) -> Character:
     return build_character(read_raw(char_id, root))
 
 
+def summary(char_id: str, raw: dict[str, Any]) -> dict[str, Any]:
+    """Короткий опис персонажа для списку у вебі — спільний для всіх бекендів
+    (файли, SQLite, PostgreSQL), щоб колонки списку ніколи не розходились."""
+    provider = (raw.get("provider") or "openai").strip()
+    return {
+        "id": char_id,
+        "display_name": raw.get("display_name") or char_id,
+        "provider": provider,
+        "provider_label": "Google Gemini" if provider == "google" else "OpenAI",
+        "voice": raw.get("voice") or "",
+        "openai_voice": raw.get("openai_voice") or "marin",
+        # Голос, яким персонаж говоритиме у вебі — залежить від провайдера.
+        "web_voice": (raw.get("voice") or "Charon") if provider == "google"
+                     else (raw.get("openai_voice") or "marin"),
+        "wake_words": list(raw.get("wake_words") or []),
+        "win_word": raw.get("win_word") or "",
+        "questions": len(raw.get("questions") or []),
+        "custom_prompt": bool((raw.get("system_prompt") or "").strip()),
+    }
+
+
 def list_characters(root: Optional[Path] = None) -> list[dict[str, Any]]:
     """Короткий опис усіх персонажів для списку у вебі."""
     out: list[dict[str, Any]] = []
@@ -156,22 +177,28 @@ def list_characters(root: Optional[Path] = None) -> list[dict[str, Any]]:
             raw = read_raw(char_id, root)
         except (CharacterError, yaml.YAMLError):
             continue  # пошкоджений файл не має ламати весь список
-        provider = (raw.get("provider") or "openai").strip()
-        out.append({
-            "id": char_id,
-            "display_name": raw.get("display_name") or char_id,
-            "provider": provider,
-            "provider_label": "Google Gemini" if provider == "google" else "OpenAI",
-            "voice": raw.get("voice") or "",
-            "openai_voice": raw.get("openai_voice") or "marin",
-            # Голос, яким персонаж говоритиме у вебі — залежить від провайдера.
-            "web_voice": (raw.get("voice") or "Charon") if provider == "google"
-                         else (raw.get("openai_voice") or "marin"),
-            "wake_words": list(raw.get("wake_words") or []),
-            "win_word": raw.get("win_word") or "",
-            "questions": len(raw.get("questions") or []),
-            "custom_prompt": bool((raw.get("system_prompt") or "").strip()),
-        })
+        out.append(summary(char_id, raw))
+    return out
+
+
+def read_seed_files(root: Optional[Path] = None) -> list[tuple[str, dict[str, Any]]]:
+    """Персонажі з characters/*.yaml як (id, словник) — початкове наповнення
+    для бекендів із базою даних (SQLite, PostgreSQL)."""
+    directory = characters_dir(root)
+    if not directory.exists():
+        return []
+    out: list[tuple[str, dict[str, Any]]] = []
+    for path in sorted(directory.glob("*.yaml")):
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                raw = yaml.safe_load(fh) or {}
+        except (OSError, yaml.YAMLError):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        payload = dict(raw)
+        payload["id"] = path.stem
+        out.append((path.stem, payload))
     return out
 
 

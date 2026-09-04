@@ -8,11 +8,11 @@
 непрозорий JSON (телефони самі валідують те, що отримують). Так мобільний
 формат може розвиватись без жодних змін на сервері.
 
-Надійність — через самовідновлення, а не через гарантії сховища: пам'ять +
-best-effort файл data/mobile_characters.json. Навіть якщо сервер втратить
-усе (рестарт, ефемерний диск), перший же такт синхронізації будь-якого
-телефона наповнить сховище заново, а таймстампи гарантують, що старі версії
-ніколи не затруть новіші.
+Зберігається в SQLite (таблиця mobile_characters спільної бази панелі,
+domovyk_quest/db.py) — переживає перезапуск. У пам'яті лише кеш для
+швидкого порівняння; кожна зміна одразу пишеться в базу. А навіть якби
+база зникла, протокол самовідновлюваний: кожен телефон щотакту шле повний
+набір, і таймстампи гарантують, що старі версії не затруть новіші.
 
 Видалення синхронізується «надгробками»: телефон шле {id, deleted: true,
 updated_at}, і цей документ бере участь у тому самому LWW-порівнянні, що й
@@ -24,11 +24,15 @@ updated_at}, і цей документ бере участь у тому сам
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 import time
-from pathlib import Path
 from typing import Any, Optional
+
+from domovyk_quest import db
+
+log = logging.getLogger("ostvytsya.mobile_characters")
 
 # Розумні стелі, щоб зіпсований чи зловмисний клієнт не роздув сховище.
 MAX_CHARACTERS = 200
@@ -47,41 +51,50 @@ PROTECTED_IDS = frozenset({"domovychok", "povitrulya", "derevo"})
 # оновлення цього персонажа з усіх інших телефонів).
 _MAX_CLOCK_SKEW_S = 300
 
-_STORE_PATH = Path(__file__).resolve().parent.parent / "data" / "mobile_characters.json"
-
 
 class MobileCharacterStore:
-    def __init__(self, path: Path = _STORE_PATH) -> None:
-        self._path = path
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self._chars: dict[str, dict[str, Any]] = {}
-        self._load()
+        self._loaded = False
 
-    # ── Диск (best-effort) ────────────────────────────────────────────────
+    # ── база ──────────────────────────────────────────────────────────────
 
-    def _load(self) -> None:
-        try:
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
+    def _ensure_loaded(self) -> None:
+        """Кеш піднімається при першому зверненні, а не при імпорті."""
+        if self._loaded:
             return
-        except Exception:
-            return  # зіпсований файл — почнемо з порожнього, телефони доллють
-        if not isinstance(raw, dict):
-            return
-        for cid, doc in raw.items():
-            if isinstance(cid, str) and _ID_RE.match(cid) and isinstance(doc, dict):
-                self._chars[cid] = doc
-
-    def _persist(self) -> None:
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_suffix(".tmp")
-            tmp.write_text(
-                json.dumps(self._chars, ensure_ascii=False), encoding="utf-8"
-            )
-            tmp.replace(self._path)
-        except Exception:
-            pass  # диск може бути read-only/ефемерним — сховище в пам'яті важливіше
+            with db.connect() as conn:
+                rows = conn.execute("SELECT id, doc FROM mobile_characters").fetchall()
+            for row in rows:
+                cid = str(row["id"])
+                try:
+                    doc = json.loads(row["doc"])
+                except ValueError:
+                    continue
+                if _ID_RE.match(cid) and isinstance(doc, dict):
+                    self._chars[cid] = doc
+        except Exception:  # noqa: BLE001 — база не має валити синхронізацію
+            log.exception("Не вдалося прочитати мобільних персонажів із бази")
+        self._loaded = True
+
+    def _persist(self, changed: list[str]) -> None:
+        try:
+            with db.connect() as conn:
+                for cid in changed:
+                    doc = self._chars.get(cid)
+                    if doc is None:
+                        continue
+                    conn.execute(
+                        "INSERT INTO mobile_characters (id, doc, updated_at) VALUES (?, ?, ?) "
+                        "ON CONFLICT(id) DO UPDATE SET doc = excluded.doc, "
+                        "updated_at = excluded.updated_at",
+                        (cid, json.dumps(doc, ensure_ascii=False),
+                         int(doc.get("updated_at") or 0)),
+                    )
+        except Exception:  # noqa: BLE001 — телефони доллють знову наступним тактом
+            log.exception("Не вдалося зберегти мобільних персонажів у базу")
 
     # ── Синхронізація ─────────────────────────────────────────────────────
 
@@ -120,8 +133,9 @@ class MobileCharacterStore:
         if not isinstance(incoming, list):
             incoming = []
         reported: dict[str, int] = {}
-        changed = False
+        changed: list[str] = []
         with self._lock:
+            self._ensure_loaded()
             for raw in incoming[:MAX_CHARACTERS]:
                 doc = self._sanitize(raw, now)
                 if doc is None:
@@ -135,10 +149,10 @@ class MobileCharacterStore:
                     reported[cid] = 0
                 cur = self._chars.get(cid)
                 cur_ts = int(cur.get("updated_at") or 0) if cur else -1
-                if doc["updated_at"] > cur_ts or cur is None:
+                if doc["updated_at"] > cur_ts:
                     if cid in self._chars or len(self._chars) < MAX_CHARACTERS:
                         self._chars[cid] = doc
-                        changed = True
+                        changed.append(cid)
             out = [
                 doc
                 for cid, doc in self._chars.items()
@@ -146,11 +160,12 @@ class MobileCharacterStore:
                 or int(doc.get("updated_at") or 0) > reported[cid]
             ]
             if changed:
-                self._persist()
+                self._persist(changed)
         return out
 
     def count(self) -> int:
         with self._lock:
+            self._ensure_loaded()
             return len(self._chars)
 
 

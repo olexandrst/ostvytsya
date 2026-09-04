@@ -50,11 +50,28 @@ def main(argv=None) -> int:
     p.add_argument("--reload", action="store_true", help="перезапуск при зміні коду (розробка)")
     p.add_argument("--hash-password", metavar="PAROL",
                    help="порахувати хеш пароля для OSTVYTSYA_WEB_PASSWORD_HASH і вийти")
+    p.add_argument("--set-admin-password", metavar="PAROL",
+                   help="задати новий пароль адміністратора в базі панелі й вийти "
+                        "(якщо забув старий)")
     args = p.parse_args(argv)
 
     if args.hash_password:
         from .auth import hash_password
         print(hash_password(args.hash_password))
+        return 0
+
+    if args.set_admin_password:
+        # Імпорт web.app читає .env і створює адміністратора, якщо його ще
+        # немає, — тож після цього рядок у базі гарантовано є.
+        from .app import INITIAL_PASSWORD_FILE, auth
+        from .auth import AuthError
+        try:
+            auth.set_password(auth.user, args.set_admin_password)
+        except AuthError as exc:
+            print(f"❌ {exc}", file=sys.stderr)
+            return 1
+        INITIAL_PASSWORD_FILE.unlink(missing_ok=True)
+        print(f"✅ Пароль адміністратора «{auth.user}» змінено.")
         return 0
 
     try:
@@ -68,8 +85,8 @@ def main(argv=None) -> int:
                         datefmt="%H:%M:%S")
 
     # Імпорт web.app читає .env (див. app.py), тож стан оточення перевіряємо після нього.
-    from .app import _ENV_PATH
-    from .auth import Auth
+    from .app import _ENV_PATH, INITIAL_PASSWORD_FILE, auth
+    from domovyk_quest import db
     from domovyk_quest.envfile import mask
 
     if _ENV_PATH:
@@ -84,23 +101,30 @@ def main(argv=None) -> int:
         print("⚠️  Не задано OPENAI_API_KEY — квест не запуститься. "
               "Впиши ключ у файл .env (саме .env, не .env.example).", file=sys.stderr)
 
-    if not Auth().configured:
-        print("⚠️  Не задано пароль (OSTVYTSYA_WEB_PASSWORD у .env) — вхід буде неможливий.",
+    print(f"🗄️  База панелі (SQLite): {db.db_path()}")
+    if not auth.configured:
+        print("⚠️  Адміністратора не створено — база панелі недоступна "
+              "(перевір OSTVYTSYA_DB_PATH чи права на теку data/). Вхід буде неможливий.",
               file=sys.stderr)
+    elif INITIAL_PASSWORD_FILE.exists():
+        print(f"🔑 Адміністратор «{auth.user}», початковий пароль — у файлі "
+              f"{INITIAL_PASSWORD_FILE} (зміни його в панелі: /account).")
+    else:
+        print(f"👤 Адміністратор: «{auth.user}» (пароль — у базі; забув → "
+              f"python -m web --set-admin-password …)")
 
-    if _hosted() and not (os.environ.get("OSTVYTSYA_WEB_SECRET") or "").strip():
-        print("⚠️  Не задано OSTVYTSYA_WEB_SECRET — після кожного перезапуску "
-              "сервісу всіх користувачів викидатиме на сторінку входу.", file=sys.stderr)
-
-    from domovyk_quest.config import render_storage_enabled
-    if render_storage_enabled():
-        print("🗄️  Сховище персонажів: Render Managed PostgreSQL "
-              "(config.yaml → storage.render: yes)")
+    from domovyk_quest.characters_store import storage_backend
+    backend = storage_backend()
+    if backend == "postgresql":
+        print("🗄️  Персонажі редактора: Render Managed PostgreSQL "
+              "(storage.backend: postgresql)")
         if not (os.environ.get("DATABASE_URL") or "").strip():
             print("⚠️  DATABASE_URL не задано — з'єднання з PostgreSQL не вдасться. "
                   "Прив'яжи Managed PostgreSQL до сервісу в Render.", file=sys.stderr)
+    elif backend == "files":
+        print("🗄️  Персонажі редактора: файли characters/*.yaml (storage.backend: files)")
     else:
-        print("🗄️  Сховище персонажів: файли characters/*.yaml")
+        print("🗄️  Персонажі редактора: та сама база SQLite (storage.backend: sqlite)")
 
     if _hosted():
         print(f"🌐 Слухаю {args.host}:{args.port} (хостинг сам віддасть публічну адресу)")
