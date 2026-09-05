@@ -7,6 +7,7 @@ import 'screens/home_screen.dart';
 import 'services/character_sync.dart';
 import 'services/settings_store.dart';
 import 'services/status_reporter.dart';
+import 'services/win_reporter.dart';
 
 void main() {
   // Ловимо будь-які необроблені помилки Dart і пишемо їх у системний лог
@@ -33,6 +34,9 @@ void main() {
       // Синхронізація персонажів між терміналами: працює, лише коли в
       // налаштуваннях вказано адресу сервера; без неї — тихо нічого не робить.
       CharacterSync.instance.start();
+      // Недоставлені повідомлення про перемоги (немає мережі в мить
+      // перемоги) — досилаються при старті й далі раз на 5 хвилин.
+      WinReporter.instance.start();
       runApp(const OstvytsyaApp());
     },
     (error, stack) {

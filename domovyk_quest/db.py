@@ -51,6 +51,18 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS wins (
+    event_id     TEXT PRIMARY KEY, -- id події з телефона (= ім'я сесії) — повтори ідемпотентні
+    agent_id     TEXT NOT NULL,
+    character    TEXT,
+    character_id TEXT,
+    won_at       REAL NOT NULL,    -- unix-час перемоги за годинником телефона
+    duration_s   INTEGER,
+    run_number   INTEGER,
+    app_version  TEXT,
+    received_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS wins_agent_won_idx ON wins (agent_id, won_at);
 """
 
 _schema_lock = threading.Lock()

@@ -26,11 +26,13 @@
           <th>Батарея</th>
           <th>Bluetooth</th>
           <th>Координати</th>
+          <th>Перемоги</th>
           <th>Звіт</th>
         </tr>
       </thead>
       <tbody>
         {% for a in agents %}
+        {% set w = win_stats.get(a.agent_id) %}
         <tr class="{{ 'is-offline' if not a.online else '' }}">
           <td>
             <strong>{{ a.agent_id }}</strong>
@@ -70,6 +72,12 @@
               <a href="{{ a.map_url }}" target="_blank" rel="noopener">{{ a.coordinates }}</a>
             {% else %}—{% endif %}
           </td>
+          <td>
+            {% if w and w.total %}
+              <span class="badge badge-ok">🏆 {{ w.total }}</span>
+              <div class="muted small">сьогодні {{ w.today }} · остання {{ w.last_label }}</div>
+            {% else %}—{% endif %}
+          </td>
           <td class="muted small">
             {% if a.seconds_ago < 60 %}
               щойно
@@ -91,6 +99,43 @@
   Термінали звітують раз на 5 хвилин. Той, від якого нічого не чути понад
   12 хвилин, показаний приглушено.
 </p>
+
+<div class="head-row">
+  <h2>🏆 Останні перемоги</h2>
+  <span class="muted small">{{ recent_wins|length }} останніх</span>
+</div>
+{% if not recent_wins %}
+  <div class="card empty">
+    <p class="muted">Жодна команда ще не пройшла квест до кінця.</p>
+  </div>
+{% else %}
+<div class="card">
+  <div class="table-scroll">
+    <table class="agents">
+      <thead>
+        <tr>
+          <th>Коли</th>
+          <th>Термінал</th>
+          <th>Персонаж</th>
+          <th>Тривалість квесту</th>
+          <th>Спроба</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for w in recent_wins %}
+        <tr>
+          <td>{{ w.when_label }}</td>
+          <td><strong>{{ w.agent_id }}</strong></td>
+          <td>{{ w.character or w.character_id or '—' }}</td>
+          <td>{{ w.duration_label }}</td>
+          <td class="muted small">{{ w.run_number if w.run_number is not none else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 
 <script>
   // Сторінка — це зріз стану, тож просто оновлюємо її раз на пів хвилини.

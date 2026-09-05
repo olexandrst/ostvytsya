@@ -7,6 +7,7 @@ import '../services/device_memory.dart';
 import '../services/session_logger.dart';
 import '../services/session_recorder.dart';
 import '../services/settings_store.dart';
+import '../services/win_reporter.dart';
 import 'audio_pipeline.dart';
 import 'transcript_line.dart';
 import 'transcript_utils.dart';
@@ -175,6 +176,22 @@ class QuestController {
         );
       }
       final durationS = DateTime.now().difference(startedAt).inSeconds;
+      if (outcome == QuestOutcome.won) {
+        // Перемога команди — подія для панелі. Асинхронно, збоку від
+        // квесту; WinReporter сам подбає про доставку (черга на диску,
+        // повтори), тож тут — лише зафіксувати.
+        unawaited(
+          WinReporter.instance.record(
+            sessionName: baseName,
+            characterId: character.id,
+            characterName: character.displayName,
+            wonAt: DateTime.now(),
+            durationS: durationS,
+            runNumber: _runCount,
+          ),
+        );
+        _say('system', 'Перемога зафіксована — повідомляю панель.');
+      }
       // Знімок пам'яті наприкінці КОЖНОЇ спроби: якщо цифри процесу ростуть
       // від спроби до спроби — це витік, і журнали покажуть його раніше, ніж
       // система вб'є застосунок через LOW_MEMORY.

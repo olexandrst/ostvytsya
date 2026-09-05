@@ -29,6 +29,7 @@ from starlette.status import HTTP_303_SEE_OTHER
 
 from domovyk_quest.envfile import load_env_file
 
+from . import wins as win_log
 from .agents import registry as agent_registry
 from .mobile_characters import store as mobile_character_store
 
@@ -537,6 +538,26 @@ async def api_characters_sync(request: Request):
     )
 
 
+@app.post("/api/agents/win")
+async def api_agent_win(request: Request):
+    """Подія «команда пройшла квест» від термінала.
+
+    Без логіна — з тих самих міркувань, що й /api/agents/status. Телефон
+    повторює надсилання, доки не отримає 200, тож подія має бути
+    ідемпотентною: event_id = ім'я сесії на телефоні, дубль ігнорується.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+    if not isinstance(payload, dict):
+        return JSONResponse({"status": "ignored"}, status_code=200)
+    event = win_log.record(payload)
+    if event is None:
+        return JSONResponse({"status": "ignored"}, status_code=200)
+    return JSONResponse({"status": "ok"})
+
+
 @app.get("/agents", response_class=HTMLResponse)
 async def agents_page(request: Request, user: str = Depends(require_login)):
     agents = agent_registry.all()
@@ -545,6 +566,8 @@ async def agents_page(request: Request, user: str = Depends(require_login)):
         "csrf": csrf_token(request),
         "agents": agents,
         "online_count": sum(1 for a in agents if a.online),
+        "win_stats": win_log.stats(),
+        "recent_wins": win_log.recent(50),
         "model": model_name(),
     })
 

@@ -362,3 +362,6 @@ table.agents tr:last-child td { border-bottom: none; }
 table.agents tr.is-offline td { opacity: .45; }
 
 .badge-warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--gold); }
+
+/* Перемоги на сторінці терміналів */
+.badge-ok { background: var(--ok-bg); border-color: var(--ok-line); }
