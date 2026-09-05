@@ -98,11 +98,13 @@ class WakeGateService {
     }
   }
 
-  /// Слухати мікрофон локально, доки не почується одне з [wakeWords], або
-  /// доки [isStopRequested] не почне повертати true (користувач натиснув
-  /// «Зупинити»). Повертає true лише якщо почуто кодове слово.
+  /// Слухати мікрофон локально, доки не почується одне з [wakeWords] (або,
+  /// якщо [wakeOnVoice], будь-яке розбірливе мовлення — для зазивайла біля
+  /// входу), або доки [isStopRequested] не почне повертати true (користувач
+  /// натиснув «Зупинити»). Повертає true лише якщо є привід прокинутись.
   Future<bool> waitForWake({
     required List<String> wakeWords,
+    bool wakeOnVoice = false,
     required bool Function() isStopRequested,
   }) async {
     await ensureReady();
@@ -130,6 +132,9 @@ class WakeGateService {
             ? 'Слухаю мікрофон за замовчуванням.'
             : 'Слухаю мікрофон «${device.label}».',
       );
+      if (wakeOnVoice) {
+        _diagCtrl.add('Прокидаюсь від будь-якого голосу — без кодового слова.');
+      }
       final stream = await _recorder.startStream(
         RecordConfig(
           encoder: AudioEncoder.pcm16bits,
@@ -165,6 +170,11 @@ class WakeGateService {
           }
           if (text.isNotEmpty &&
               matchesWakeWord(text, wakeWords, threshold: _fuzzyThreshold)) {
+            finish(true);
+            return;
+          }
+          if (wakeOnVoice && _soundsLikeSpeech(text)) {
+            _diagCtrl.add('Чую голоси — прокидаюсь.');
             finish(true);
             return;
           }
@@ -269,6 +279,19 @@ class WakeGateService {
   static bool _needsReset(String partial, DateTime lastFinalAt) {
     if (DateTime.now().difference(lastFinalAt) > _maxUtterance) return true;
     return partial.split(RegExp(r'\s+')).length > _maxPartialWords;
+  }
+
+  /// Чи схоже почуте на справжнє мовлення, а не на випадковий вигук чи шум:
+  /// Vosk у тиші раз у раз «чує» одне коротке слово («а», «і», «та») — на
+  /// таке зазивайло озиватись не має. Два слова й хоча б шість літер —
+  /// уже хтось говорить.
+  static bool _soundsLikeSpeech(String text) {
+    final tokens = text
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList();
+    if (tokens.length < 2) return false;
+    return tokens.fold<int>(0, (sum, t) => sum + t.length) >= 6;
   }
 
   String _extractText(String rawJson, bool isFinal) {

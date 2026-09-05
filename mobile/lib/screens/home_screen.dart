@@ -344,6 +344,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 final voiceLabel = c.provider == 'google'
                     ? c.voice
                     : c.openaiVoice;
+                final wakeLabel = c.wakeOnVoice
+                    ? 'прокидається від голосу'
+                    : 'кодове «${c.effectiveWakeWords.join(', ')}»';
+                final endLabel = c.winWord.isNotEmpty
+                    ? 'перемога «${c.winWord}»'
+                    : (c.stopWords.isNotEmpty
+                          ? 'завершення «${c.stopWords.join(', ')}»'
+                          : 'без слова перемоги');
                 return Card(
                   margin: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -358,7 +366,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: Text(c.displayName),
                     subtitle: Text(
                       '$providerLabel · голос $voiceLabel\n'
-                      'кодове «${c.effectiveWakeWords.join(', ')}» · перемога «${c.winWord}»',
+                      '$wakeLabel · $endLabel',
                     ),
                     isThreeLine: true,
                     trailing: PopupMenuButton<String>(

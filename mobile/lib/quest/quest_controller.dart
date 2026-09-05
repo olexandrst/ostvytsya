@@ -13,12 +13,15 @@ import 'transcript_line.dart';
 import 'transcript_utils.dart';
 import 'transport.dart';
 import 'wake_gate.dart';
+import 'wake_matcher.dart';
 
 export 'transcript_line.dart';
 
 enum QuestPhase { listening, connecting, running, restarting, stopped }
 
-enum QuestOutcome { won, timeout, error, aborted }
+/// [ended] — сесію завершили самі гості словом завершення (Character.stopWords),
+/// напр. «Каліпсо» наприкінці екскурсії: це штатний кінець, але не перемога.
+enum QuestOutcome { won, ended, timeout, error, aborted }
 
 class QuestStatusUpdate {
   final QuestPhase phase;
@@ -74,6 +77,10 @@ class QuestController {
   final _preWake = <TranscriptLine>[];
   static const _preWakeMax = 15;
 
+  /// Скільки разів поспіль просити екскурсовода продовжити, не почувши
+  /// жодного слова від людей: далі — хай спрацьовує тайм-аут тиші.
+  static const _maxAutoContinues = 15;
+
   bool _stopRequested = false;
   bool _running = false;
   int _runCount = 0;
@@ -119,6 +126,7 @@ class QuestController {
       try {
         woke = await wakeGate.waitForWake(
           wakeWords: character.effectiveWakeWords,
+          wakeOnVoice: character.wakeOnVoice,
           isStopRequested: () => _stopRequested,
         );
       } catch (e) {
@@ -263,6 +271,8 @@ class QuestController {
     switch (outcome) {
       case QuestOutcome.won:
         return 'перемога';
+      case QuestOutcome.ended:
+        return 'завершено словом гостей';
       case QuestOutcome.timeout:
         return 'тайм-аут';
       case QuestOutcome.error:
@@ -313,8 +323,18 @@ class QuestController {
     var winMentions = 0;
     var repeatRequested = false;
     var finishing = false;
+    // Гості сказали слово завершення (Character.stopWords): даємо персонажу
+    // відповісти (за інструкцією — попрощатись) і закриваємо сесію.
+    var stopping = false;
     var lastVoice = DateTime.now();
     final startTime = DateTime.now();
+    // Екскурсовод (Character.autoContinueS): модель говорить лише у
+    // відповідь, тож коли гості мовчки слухають, ми самі просимо її
+    // продовжити розповідь. Лічимо підштовхування без жодного слова людей —
+    // порожньому човну розповідати годинами не варто.
+    var userSpokeSinceTurn = false;
+    var autoContinues = 0;
+    var lastNudgeAt = DateTime.now();
 
     final transport = transportFactory(character, apiKey);
     _transport = transport;
@@ -356,6 +376,17 @@ class QuestController {
         case QuestEventKind.userTranscriptDelta:
           userBuf += evt.text ?? '';
           lastVoice = DateTime.now();
+          userSpokeSinceTurn = true;
+          autoContinues = 0;
+          if (!stopping &&
+              character.stopWords.isNotEmpty &&
+              matchesWakeWord(userBuf, character.stopWords, threshold: 0.8)) {
+            stopping = true;
+            _say(
+              'system',
+              'Почуто слово завершення від гостей — персонаж прощається.',
+            );
+          }
           break;
         case QuestEventKind.agentTranscriptDelta:
           modelBuf += evt.text ?? '';
@@ -387,6 +418,7 @@ class QuestController {
           }
           userBuf = '';
           modelBuf = '';
+          userSpokeSinceTurn = false;
           audio.unmuteIfNoAudioYet();
           if (won && !finishing) {
             if (winMentions >= 2 || repeatRequested) {
@@ -411,6 +443,12 @@ class QuestController {
                 'на цьому закінчи, більше нічого не кажи.]',
               );
             }
+          }
+          if (stopping && !finishing) {
+            // Персонаж відповів на слово завершення (за інструкцією —
+            // попрощався). Договорює до кінця — і сесія закривається.
+            finishing = true;
+            audio.waitDrained().then((_) => finish(QuestOutcome.ended));
           }
           break;
         case QuestEventKind.interrupted:
@@ -463,16 +501,41 @@ class QuestController {
         return;
       }
       final idleS = DateTime.now().difference(lastVoice).inSeconds;
-      if (won) {
-        // Запобіжник: перемога є, а хід так і не завершився (немає
-        // turnComplete чи повтору) — не тримаємо сесію, закриваємо після
-        // короткої тиші.
+      if (won || stopping) {
+        // Запобіжник: перемога є (чи гості сказали слово завершення), а хід
+        // так і не завершився (немає turnComplete чи повтору) — не тримаємо
+        // сесію, закриваємо після короткої тиші.
         if (idleS > kWinSafetyTimeoutS) {
-          finish(QuestOutcome.won);
+          finish(won ? QuestOutcome.won : QuestOutcome.ended);
         }
         return;
       }
-      if (idleS > kInactivityTimeoutS) {
+      // Екскурсовод: гості мовчки слухають — просимо продовжити розповідь.
+      final autoS = character.autoContinueS;
+      if (autoS != null &&
+          autoS > 0 &&
+          !userSpokeSinceTurn &&
+          autoContinues < _maxAutoContinues) {
+        final now = DateTime.now();
+        final quietS = now
+            .difference(lastVoice.isAfter(lastNudgeAt) ? lastVoice : lastNudgeAt)
+            .inSeconds;
+        if (quietS >= autoS) {
+          autoContinues++;
+          lastNudgeAt = now;
+          _say('system', 'Гості мовчать — прошу персонажа продовжити розповідь.');
+          transport.sendText(
+            '[Службовий сигнал — не читай його вголос. Гості мовчки слухають '
+            'і чекають. Продовжуй розповідь наступною частиною — кілька '
+            'речень у своєму образі — і наприкінці коротко звернись до '
+            'гостей.]',
+          );
+        }
+      }
+      // Тайм-аут тиші — персонажа (зазивайлу вистачить хвилини, квесту з
+      // фізичним пошуком треба довше) або типовий.
+      final idleLimit = character.inactivityTimeoutS ?? kInactivityTimeoutS;
+      if (idleS > idleLimit) {
         finish(QuestOutcome.timeout);
       }
     });

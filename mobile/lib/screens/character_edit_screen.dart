@@ -24,10 +24,14 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
   late final TextEditingController _promptCtrl;
   late final TextEditingController _winWordCtrl;
   late final TextEditingController _wakeWordsCtrl;
+  late final TextEditingController _stopWordsCtrl;
+  late final TextEditingController _idleTimeoutCtrl;
+  late final TextEditingController _autoContinueCtrl;
   late String _provider;
   late String _openaiVoice;
   late String _geminiVoice;
   late double _speechSpeed;
+  late bool _wakeOnVoice;
   bool _saving = false;
 
   bool get _isNew => widget.character == null;
@@ -42,6 +46,16 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
     _wakeWordsCtrl = TextEditingController(
       text: (c?.wakeWords ?? const []).join(', '),
     );
+    _stopWordsCtrl = TextEditingController(
+      text: (c?.stopWords ?? const []).join(', '),
+    );
+    _idleTimeoutCtrl = TextEditingController(
+      text: c?.inactivityTimeoutS?.toString() ?? '',
+    );
+    _autoContinueCtrl = TextEditingController(
+      text: c?.autoContinueS?.toString() ?? '',
+    );
+    _wakeOnVoice = c?.wakeOnVoice ?? false;
     _provider = c?.provider ?? 'google';
     _openaiVoice = (c?.openaiVoice.isNotEmpty ?? false)
         ? c!.openaiVoice
@@ -58,8 +72,29 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
     _promptCtrl.dispose();
     _winWordCtrl.dispose();
     _wakeWordsCtrl.dispose();
+    _stopWordsCtrl.dispose();
+    _idleTimeoutCtrl.dispose();
+    _autoContinueCtrl.dispose();
     super.dispose();
   }
+
+  int? _optionalInt(TextEditingController ctrl) {
+    final raw = ctrl.text.trim();
+    return raw.isEmpty ? null : int.tryParse(raw);
+  }
+
+  String? _validateOptionalInt(String? v, int min) {
+    final t = (v ?? '').trim();
+    if (t.isEmpty) return null;
+    final n = int.tryParse(t);
+    return (n == null || n < min) ? 'Ціле число від $min' : null;
+  }
+
+  List<String> _splitWords(String raw) => raw
+      .split(',')
+      .map((w) => w.trim())
+      .where((w) => w.isNotEmpty)
+      .toList();
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
@@ -68,11 +103,6 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
       final id =
           widget.character?.id ??
           await widget.store.uniqueIdFromName(_nameCtrl.text);
-      final wakeWords = _wakeWordsCtrl.text
-          .split(',')
-          .map((w) => w.trim())
-          .where((w) => w.isNotEmpty)
-          .toList();
       final character = Character(
         id: id,
         displayName: _nameCtrl.text.trim(),
@@ -81,10 +111,14 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
         voice: _geminiVoice,
         speechSpeed: _speechSpeed,
         systemPrompt: _promptCtrl.text.trim(),
-        winWord: _winWordCtrl.text.trim().isEmpty
-            ? kDefaultWinWord
-            : _winWordCtrl.text.trim(),
-        wakeWords: wakeWords,
+        // Порожньо — дозволено: персонаж без слова перемоги (екскурсія,
+        // зазивайло) завершує сесію словом гостей чи тайм-аутом тиші.
+        winWord: _winWordCtrl.text.trim(),
+        wakeWords: _splitWords(_wakeWordsCtrl.text),
+        stopWords: _splitWords(_stopWordsCtrl.text),
+        wakeOnVoice: _wakeOnVoice,
+        inactivityTimeoutS: _optionalInt(_idleTimeoutCtrl),
+        autoContinueS: _optionalInt(_autoContinueCtrl),
       );
       await widget.store.save(character);
       if (mounted) Navigator.pop(context, true);
@@ -188,12 +222,66 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
                 helperMaxLines: 3,
               ),
             ),
-            const SizedBox(height: 16),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Прокидатись від будь-якого голосу'),
+              subtitle: const Text(
+                'Для зазивайла біля входу: озивається, щойно поруч '
+                'заговорять, — кодове слово не потрібне.',
+              ),
+              value: _wakeOnVoice,
+              onChanged: (v) => setState(() => _wakeOnVoice = v),
+            ),
+            const SizedBox(height: 8),
             TextFormField(
               controller: _winWordCtrl,
               decoration: const InputDecoration(
                 labelText: 'Таємне слово (перемога)',
+                helperText:
+                    'Персонаж називає його в кінці — це перемога й кінець '
+                    'квесту. Порожньо — квест не завершується словом '
+                    'персонажа (екскурсія, зазивайло).',
+                helperMaxLines: 3,
               ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _stopWordsCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Слова завершення від гостей',
+                helperText:
+                    'Через кому. Почувши одне з них від гравців, персонаж '
+                    'прощається і сесія закривається (напр. «Каліпсо» для '
+                    'екскурсії).',
+                helperMaxLines: 3,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _idleTimeoutCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Тайм-аут тиші, секунд',
+                helperText:
+                    'Скільки тиші завершують сесію. Порожньо — 30 хвилин. '
+                    'Зазивайлу вистачить ~60, квесту з пошуком — 600+.',
+                helperMaxLines: 3,
+              ),
+              validator: (v) => _validateOptionalInt(v, 10),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _autoContinueCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Продовжувати розповідь сам після N секунд тиші',
+                helperText:
+                    'Для екскурсовода: модель говорить лише у відповідь, тож '
+                    'коли гості мовчки слухають, застосунок просить її '
+                    'продовжити. Порожньо — вимкнено (звичайний квест).',
+                helperMaxLines: 3,
+              ),
+              validator: (v) => _validateOptionalInt(v, 5),
             ),
             const SizedBox(height: 16),
             TextFormField(

@@ -159,6 +159,9 @@ class _QuestScreenState extends State<QuestScreen> {
   String _phaseLabel(QuestPhase phase) {
     switch (phase) {
       case QuestPhase.listening:
+        if (widget.character.wakeOnVoice) {
+          return '💤 Слухаю — озвуся, щойно почую голоси';
+        }
         final words = widget.character.effectiveWakeWords.join(', ');
         return '💤 Слухаю кодове слово: «$words»';
       case QuestPhase.connecting:

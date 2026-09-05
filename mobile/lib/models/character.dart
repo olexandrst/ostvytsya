@@ -17,6 +17,26 @@ class Character {
   String winWord;
   List<String> wakeWords;
 
+  /// Слова від ГОСТЕЙ, що завершують сесію (напр. «Каліпсо» для екскурсії):
+  /// почувши одне з них у мовленні гравців, застосунок дає персонажу
+  /// попрощатись і закриває сесію. Порожньо — сесія закінчується лише словом
+  /// перемоги персонажа чи тайм-аутом.
+  List<String> stopWords;
+
+  /// Прокидатись від БУДЬ-ЯКОГО голосу, а не лише від кодового слова
+  /// (персонаж-зазивайло біля входу: чує людей — і озивається).
+  bool wakeOnVoice;
+
+  /// Скільки секунд тиші завершують сесію; null — типова константа
+  /// застосунку (kInactivityTimeoutS). Зазивайлу потрібна коротка (~60 с),
+  /// квесту з фізичним пошуком — довга.
+  int? inactivityTimeoutS;
+
+  /// Екскурсовод: якщо гості мовчать стільки секунд після репліки персонажа,
+  /// застосунок просить його продовжити розповідь наступною частиною — бо
+  /// модель сама по себе говорить лише у відповідь. null — вимкнено.
+  int? autoContinueS;
+
   /// Unix-час (секунди) останньої правки користувачем — основа синхронізації
   /// між терміналами («останній запис перемагає»). 0 — типовий персонаж із
   /// комплекту, якого ще ніхто не редагував: будь-яка правка на будь-якому
@@ -33,12 +53,28 @@ class Character {
     this.systemPrompt = '',
     this.winWord = kDefaultWinWord,
     List<String>? wakeWords,
+    List<String>? stopWords,
+    this.wakeOnVoice = false,
+    this.inactivityTimeoutS,
+    this.autoContinueS,
     this.updatedAt = 0,
-  }) : wakeWords = wakeWords ?? const [];
+  }) : wakeWords = wakeWords ?? const [],
+       stopWords = stopWords ?? const [];
+
+  static int? _positiveInt(Object? raw) {
+    final n = (raw as num?)?.toInt();
+    return (n != null && n > 0) ? n : null;
+  }
+
+  static List<String> _words(Object? raw) => raw is List
+      ? raw
+            .map((e) => e.toString())
+            .where((e) => e.trim().isNotEmpty)
+            .toList()
+      : const [];
 
   factory Character.fromJson(Map<String, dynamic> json) {
     final provider = (json['provider'] as String?) ?? 'openai';
-    final wakeWordsRaw = json['wake_words'];
     return Character(
       id: json['id'] as String,
       displayName: (json['display_name'] as String?) ?? '',
@@ -49,12 +85,11 @@ class Character {
           (json['speech_speed'] as num?)?.toDouble() ?? kDefaultSpeechSpeed,
       systemPrompt: (json['system_prompt'] as String?) ?? '',
       winWord: (json['win_word'] as String?) ?? kDefaultWinWord,
-      wakeWords: wakeWordsRaw is List
-          ? wakeWordsRaw
-                .map((e) => e.toString())
-                .where((e) => e.trim().isNotEmpty)
-                .toList()
-          : const [],
+      wakeWords: _words(json['wake_words']),
+      stopWords: _words(json['stop_words']),
+      wakeOnVoice: json['wake_on_voice'] == true,
+      inactivityTimeoutS: _positiveInt(json['inactivity_timeout_s']),
+      autoContinueS: _positiveInt(json['auto_continue_s']),
       updatedAt: (json['updated_at'] as num?)?.toInt() ?? 0,
     );
   }
@@ -69,6 +104,10 @@ class Character {
     'system_prompt': systemPrompt,
     'win_word': winWord,
     'wake_words': wakeWords,
+    'stop_words': stopWords,
+    'wake_on_voice': wakeOnVoice,
+    'inactivity_timeout_s': inactivityTimeoutS,
+    'auto_continue_s': autoContinueS,
     'updated_at': updatedAt,
   };
 
@@ -82,6 +121,10 @@ class Character {
     String? systemPrompt,
     String? winWord,
     List<String>? wakeWords,
+    List<String>? stopWords,
+    bool? wakeOnVoice,
+    int? inactivityTimeoutS,
+    int? autoContinueS,
     int? updatedAt,
   }) {
     return Character(
@@ -94,6 +137,10 @@ class Character {
       systemPrompt: systemPrompt ?? this.systemPrompt,
       winWord: winWord ?? this.winWord,
       wakeWords: wakeWords ?? List<String>.from(this.wakeWords),
+      stopWords: stopWords ?? List<String>.from(this.stopWords),
+      wakeOnVoice: wakeOnVoice ?? this.wakeOnVoice,
+      inactivityTimeoutS: inactivityTimeoutS ?? this.inactivityTimeoutS,
+      autoContinueS: autoContinueS ?? this.autoContinueS,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
