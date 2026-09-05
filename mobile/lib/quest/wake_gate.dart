@@ -117,6 +117,7 @@ class WakeGateService {
     StreamSubscription<Uint8List>? sub;
     var consecutiveErrors = 0;
     var lastPartial = '';
+    var lastFinalAt = DateTime.now();
     var currentDevice = await _resolveInputDevice();
 
     Future<void> startStream() async {
@@ -165,6 +166,20 @@ class WakeGateService {
           if (text.isNotEmpty &&
               matchesWakeWord(text, wakeWords, threshold: _fuzzyThreshold)) {
             finish(true);
+            return;
+          }
+          if (ready) {
+            lastFinalAt = DateTime.now();
+          } else if (_needsReset(text, lastFinalAt)) {
+            // Термінал слухає ГОДИНАМИ. У шумі парку (вітер, гурт дітей)
+            // розпізнавач може довго не бачити кінця фрази й тягнути одне
+            // нескінченне висловлювання — його внутрішній стан і час
+            // обробки кожного шматка ростуть без меж. Скидаємо його
+            // примусово: кодове слово й так шукаємо лише в останніх словах,
+            // а те, що вже перевірили вище, втратити не страшно.
+            await recognizer.reset();
+            lastFinalAt = DateTime.now();
+            lastPartial = '';
           }
         } catch (e) {
           consecutiveErrors++;
@@ -210,7 +225,20 @@ class WakeGateService {
       try {
         await _recorder.stop();
       } catch (_) {}
-      if (!completer.isCompleted) await startStream();
+      if (completer.isCompleted) return;
+      try {
+        await startStream();
+      } catch (e) {
+        // Раніше збій тут лишав очікування без мікрофона НАЗАВЖДИ (виняток
+        // в асинхронному слухачі нікуди не потрапляв). Віддаємо помилку
+        // контролеру — він перезапустить слухання після паузи.
+        _diagCtrl.add('Не вдалося перезапустити мікрофон: $e');
+        if (!completer.isCompleted) {
+          completer.completeError(
+            Exception('Мікрофон після зміни пристрою: $e'),
+          );
+        }
+      }
     });
 
     final stopTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
@@ -228,6 +256,19 @@ class WakeGateService {
         await _recorder.stop();
       } catch (_) {}
     }
+  }
+
+  /// Скільки без жодного «кінця фрази» від розпізнавача терпимо, перш ніж
+  /// скинути його (див. коментар у слухачі). Кодове слово вимовляється за
+  /// 1–2 с, тож 20 с — із великим запасом.
+  static const _maxUtterance = Duration(seconds: 20);
+
+  /// Аналогічна стеля за довжиною часткового тексту.
+  static const _maxPartialWords = 40;
+
+  static bool _needsReset(String partial, DateTime lastFinalAt) {
+    if (DateTime.now().difference(lastFinalAt) > _maxUtterance) return true;
+    return partial.split(RegExp(r'\s+')).length > _maxPartialWords;
   }
 
   String _extractText(String rawJson, bool isFinal) {

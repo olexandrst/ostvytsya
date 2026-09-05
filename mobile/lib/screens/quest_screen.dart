@@ -27,6 +27,11 @@ class _QuestScreenState extends State<QuestScreen> {
   final _transcript = <TranscriptLine>[];
   final _scrollCtrl = ScrollController();
 
+  /// Термінал слухає годинами, а кожна зміна часткового розпізнавання —
+  /// новий рядок. Тримаємо лише хвіст, інакше список (пам'ять і
+  /// перемальовування) росте без кінця; повна історія — у журналі сесії.
+  static const _maxTranscriptLines = 400;
+
   QuestController? _controller;
   QuestStatusUpdate _status = const QuestStatusUpdate(QuestPhase.listening);
   String? _fatalError;
@@ -92,7 +97,15 @@ class _QuestScreenState extends State<QuestScreen> {
     });
     controller.transcriptStream.listen((line) {
       if (!mounted) return;
-      setState(() => _transcript.add(line));
+      setState(() {
+        _transcript.add(line);
+        if (_transcript.length > _maxTranscriptLines) {
+          _transcript.removeRange(
+            0,
+            _transcript.length - _maxTranscriptLines,
+          );
+        }
+      });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollCtrl.hasClients) {
           _scrollCtrl.animateTo(
