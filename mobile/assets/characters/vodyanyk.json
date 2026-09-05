@@ -10,5 +10,9 @@
   "wake_words": [
     "Оствиця",
     "Водяник"
-  ]
+  ],
+  "stop_words": [],
+  "wake_on_voice": false,
+  "inactivity_timeout_s": null,
+  "auto_continue_s": null
 }

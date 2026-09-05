@@ -11,7 +11,14 @@ import '../models/character.dart';
 /// документів застосунку (мобільний аналог characters/*.yaml). Жодного
 /// сервера — усе на пристрої.
 class CharacterStore {
-  static const _defaultIds = ['domovychok', 'vodyanyk', 'povitrulya', 'derevo'];
+  static const _defaultIds = [
+    'domovychok',
+    'vodyanyk',
+    'povitrulya',
+    'derevo',
+    'vitroplav',
+    'lord-monety',
+  ];
 
   /// Незнищенні персонажі парку: їх можна редагувати, але НЕ видаляти —
   /// ні локально, ні через синхронізацію (сервер теж відкидає їхні

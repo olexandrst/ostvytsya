@@ -12,5 +12,9 @@
     "князь",
     "князя",
     "княже"
-  ]
+  ],
+  "stop_words": [],
+  "wake_on_voice": false,
+  "inactivity_timeout_s": null,
+  "auto_continue_s": null
 }
