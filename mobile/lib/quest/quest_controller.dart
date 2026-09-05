@@ -229,6 +229,19 @@ class QuestController {
     ];
   }
 
+  /// Скільки разів [needle] зустрічається в [text] (без перекриття).
+  static int _countOccurrences(String text, String needle) {
+    if (needle.isEmpty) return 0;
+    var count = 0;
+    var from = 0;
+    while (true) {
+      final idx = text.indexOf(needle, from);
+      if (idx < 0) return count;
+      count++;
+      from = idx + needle.length;
+    }
+  }
+
   String _outcomeLabel(QuestOutcome outcome) {
     switch (outcome) {
       case QuestOutcome.won:
@@ -277,6 +290,12 @@ class QuestController {
     var userBuf = '';
     var modelBuf = '';
     var won = false;
+    // Скільки разів персонаж вимовив таємне слово. За інструкцією фінальна
+    // репліка містить його двічі: у самому тексті перемоги і ще раз —
+    // окремою чіткою фразою наприкінці. Один раз — просимо повторити.
+    var winMentions = 0;
+    var repeatRequested = false;
+    var finishing = false;
     var lastVoice = DateTime.now();
     final startTime = DateTime.now();
 
@@ -343,13 +362,39 @@ class QuestController {
           if (modelBuf.trim().isNotEmpty) {
             _say('agent', modelBuf.trim());
           }
+          if (winStemValue.isNotEmpty) {
+            winMentions += _countOccurrences(
+              normalizeText(modelBuf),
+              winStemValue,
+            );
+          }
           userBuf = '';
           modelBuf = '';
           audio.unmuteIfNoAudioYet();
-          // Сесію НЕ закриваємо одразу після перемоги: даємо дітям
-          // [kWinRepeatWindowS] секунд тиші, щоб встигнути перепитати таємне
-          // слово (модель сама вирішує, чи повторити — див. інструкцію),
-          // а завершує квест сторожовий таймер нижче.
+          if (won && !finishing) {
+            if (winMentions >= 2 || repeatRequested) {
+              // Слово названо і повторено (або ми вже просили повторити) —
+              // даємо договорити останню репліку до кінця і одразу
+              // завершуємо: жодних додаткових пауз, далі новий квест.
+              finishing = true;
+              audio.waitDrained().then((_) => finish(QuestOutcome.won));
+            } else {
+              // Персонаж назвав слово лише раз — просимо повторити його
+              // ще однією чіткою фразою (рівно один раз).
+              repeatRequested = true;
+              _say(
+                'system',
+                'Таємне слово прозвучало один раз — просимо персонажа '
+                'повторити його чітко.',
+              );
+              transport.sendText(
+                '[Службовий сигнал — не читай його вголос. Діти могли не '
+                'розчути. Повтори таємне слово «${character.winWord}» ще '
+                'однією короткою фразою — чітко, повільно й розбірливо — і '
+                'на цьому закінчи, більше нічого не кажи.]',
+              );
+            }
+          }
           break;
         case QuestEventKind.interrupted:
           break;
@@ -402,9 +447,10 @@ class QuestController {
       }
       final idleS = DateTime.now().difference(lastVoice).inSeconds;
       if (won) {
-        // Коротше вікно тиші після перемоги — щоб не тримати сесію
-        // відкритою цілу годину, поки ніхто вже не слухає.
-        if (idleS > kWinRepeatWindowS) {
+        // Запобіжник: перемога є, а хід так і не завершився (немає
+        // turnComplete чи повтору) — не тримаємо сесію, закриваємо після
+        // короткої тиші.
+        if (idleS > kWinSafetyTimeoutS) {
           finish(QuestOutcome.won);
         }
         return;

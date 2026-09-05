@@ -104,14 +104,18 @@ class OpenAiTransport implements QuestTransport {
     };
   }
 
-  void _sendGreeting() {
+  void _sendGreeting() => sendText(kGreetingTrigger);
+
+  @override
+  void sendText(String text) {
+    if (!_sessionReady) return;
     _send({
       'type': 'conversation.item.create',
       'item': {
         'type': 'message',
         'role': 'user',
         'content': [
-          {'type': 'input_text', 'text': kGreetingTrigger},
+          {'type': 'input_text', 'text': text},
         ],
       },
     });

@@ -273,22 +273,26 @@ class GeminiTransport implements QuestTransport {
     };
   }
 
-  void _sendGreeting() {
+  void _sendGreeting() => sendText(kGreetingTrigger);
+
+  @override
+  void sendText(String text) {
+    if (!_setupComplete) return;
     if (kGeminiLiveModel.contains('3.1')) {
       // Для gemini-3.1-flash-live-preview client_content офіційно
       // підтримується лише для "засівання" початкового контексту й НЕ
       // генерує голосової відповіді (задокументована зміна порівняно з
       // 2.5 — підтверджено на реальному пристрої: текст привітання
       // приходив повністю, а аудіо — 2 байти за весь хід). Тому для 3.1
-      // шлемо привітання як realtime_input.text — той самий канал, яким
-      // іде живий голос гравця і який надійно генерує аудіо-відповідь.
+      // шлемо текст як realtime_input.text — той самий канал, яким іде
+      // живий голос гравця і який надійно генерує аудіо-відповідь.
       // Перед цим ще й "будимо" аудіо-канал коротким шматком тиші —
       // достеменно той самий шлях, яким генерується голос під час
       // звичайного ходу з мікрофону. Якщо цей хід теж пройде без аудіо —
       // про це подбає загальний механізм відновлення в _onTurnComplete().
       _sendSilentAudioPrimer();
       _send({
-        'realtime_input': {'text': kGreetingTrigger},
+        'realtime_input': {'text': text},
       });
       return;
     }
@@ -298,7 +302,7 @@ class GeminiTransport implements QuestTransport {
           {
             'role': 'user',
             'parts': [
-              {'text': kGreetingTrigger},
+              {'text': text},
             ],
           },
         ],
