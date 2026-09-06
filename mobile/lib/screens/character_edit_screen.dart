@@ -26,7 +26,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
   late final TextEditingController _wakeWordsCtrl;
   late final TextEditingController _stopWordsCtrl;
   late final TextEditingController _idleTimeoutCtrl;
-  late final TextEditingController _autoContinueCtrl;
+  late final TextEditingController _answerWaitCtrl;
   late String _provider;
   late String _openaiVoice;
   late String _geminiVoice;
@@ -52,8 +52,8 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
     _idleTimeoutCtrl = TextEditingController(
       text: c?.inactivityTimeoutS?.toString() ?? '',
     );
-    _autoContinueCtrl = TextEditingController(
-      text: c?.autoContinueS?.toString() ?? '',
+    _answerWaitCtrl = TextEditingController(
+      text: (c?.answerWaitS ?? kDefaultAnswerWaitS).toString(),
     );
     _wakeOnVoice = c?.wakeOnVoice ?? false;
     _provider = c?.provider ?? 'google';
@@ -74,7 +74,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
     _wakeWordsCtrl.dispose();
     _stopWordsCtrl.dispose();
     _idleTimeoutCtrl.dispose();
-    _autoContinueCtrl.dispose();
+    _answerWaitCtrl.dispose();
     super.dispose();
   }
 
@@ -118,7 +118,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
         stopWords: _splitWords(_stopWordsCtrl.text),
         wakeOnVoice: _wakeOnVoice,
         inactivityTimeoutS: _optionalInt(_idleTimeoutCtrl),
-        autoContinueS: _optionalInt(_autoContinueCtrl),
+        answerWaitS: _optionalInt(_answerWaitCtrl) ?? kDefaultAnswerWaitS,
       );
       await widget.store.save(character);
       if (mounted) Navigator.pop(context, true);
@@ -271,17 +271,18 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
             ),
             const SizedBox(height: 16),
             TextFormField(
-              controller: _autoContinueCtrl,
+              controller: _answerWaitCtrl,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                labelText: 'Продовжувати розповідь сам після N секунд тиші',
+                labelText: 'Час очікування відповіді, секунд',
                 helperText:
-                    'Для екскурсовода: модель говорить лише у відповідь, тож '
-                    'коли гості мовчки слухають, застосунок просить її '
-                    'продовжити. Порожньо — вимкнено (звичайний квест).',
-                helperMaxLines: 3,
+                    'Скільки персонаж мовчки слухає людей після своєї '
+                    'репліки, перш ніж продовжити самому (повторити '
+                    'питання, підказати, вести розповідь далі). Типово 10. '
+                    '0 — без обмеження.',
+                helperMaxLines: 4,
               ),
-              validator: (v) => _validateOptionalInt(v, 5),
+              validator: (v) => _validateOptionalInt(v, 0),
             ),
             const SizedBox(height: 16),
             TextFormField(

@@ -77,8 +77,8 @@ class QuestController {
   final _preWake = <TranscriptLine>[];
   static const _preWakeMax = 15;
 
-  /// Скільки разів поспіль просити екскурсовода продовжити, не почувши
-  /// жодного слова від людей: далі — хай спрацьовує тайм-аут тиші.
+  /// Скільки разів поспіль просити персонажа продовжити, не почувши жодного
+  /// слова від людей: далі — хай спрацьовує тайм-аут тиші.
   static const _maxAutoContinues = 15;
 
   bool _stopRequested = false;
@@ -328,13 +328,19 @@ class QuestController {
     var stopping = false;
     var lastVoice = DateTime.now();
     final startTime = DateTime.now();
-    // Екскурсовод (Character.autoContinueS): модель говорить лише у
-    // відповідь, тож коли гості мовчки слухають, ми самі просимо її
-    // продовжити розповідь. Лічимо підштовхування без жодного слова людей —
-    // порожньому човну розповідати годинами не варто.
+    // Час очікування відповіді (Character.answerWaitS): модель говорить лише
+    // у відповідь, тож коли люди мовчать довше за це після репліки персонажа,
+    // ми самі просимо його продовжити (повторити питання, підказати, вести
+    // розповідь далі). Рахуємо від моменту, коли персонаж ДОГОВОРИВ (кінець
+    // відтворення), а не від приходу останнього шматка аудіо — інакше
+    // довга репліка ще звучить, а ми вже просимо наступну, і персонаж
+    // говорить без пауз, не слухаючи людей. Лічимо підштовхування без
+    // жодного слова людей — порожньому човну розповідати годинами не варто.
     var userSpokeSinceTurn = false;
     var autoContinues = 0;
     var lastNudgeAt = DateTime.now();
+    var lastUserVoiceAt = DateTime.now();
+    var agentFinishedAt = DateTime.now();
 
     final transport = transportFactory(character, apiKey);
     _transport = transport;
@@ -376,6 +382,7 @@ class QuestController {
         case QuestEventKind.userTranscriptDelta:
           userBuf += evt.text ?? '';
           lastVoice = DateTime.now();
+          lastUserVoiceAt = lastVoice;
           userSpokeSinceTurn = true;
           autoContinues = 0;
           if (!stopping &&
@@ -510,25 +517,32 @@ class QuestController {
         }
         return;
       }
-      // Екскурсовод: гості мовчки слухають — просимо продовжити розповідь.
-      final autoS = character.autoContinueS;
-      if (autoS != null &&
-          autoS > 0 &&
+      // Час очікування відповіді: персонаж договорив, люди мовчать довше за
+      // answerWaitS — просимо його продовжити самому.
+      if (audio.isSpeaking) agentFinishedAt = DateTime.now();
+      final waitS = character.answerWaitS;
+      if (waitS > 0 &&
+          loggedFirstAudioChunk &&
+          !audio.isSpeaking &&
           !userSpokeSinceTurn &&
           autoContinues < _maxAutoContinues) {
         final now = DateTime.now();
-        final quietS = now
-            .difference(lastVoice.isAfter(lastNudgeAt) ? lastVoice : lastNudgeAt)
-            .inSeconds;
-        if (quietS >= autoS) {
+        var since = agentFinishedAt;
+        if (lastUserVoiceAt.isAfter(since)) since = lastUserVoiceAt;
+        if (lastNudgeAt.isAfter(since)) since = lastNudgeAt;
+        if (now.difference(since).inSeconds >= waitS) {
           autoContinues++;
           lastNudgeAt = now;
-          _say('system', 'Гості мовчать — прошу персонажа продовжити розповідь.');
+          _say(
+            'system',
+            'Люди мовчать понад $waitS с — прошу персонажа продовжити самому.',
+          );
           transport.sendText(
-            '[Службовий сигнал — не читай його вголос. Гості мовчки слухають '
-            'і чекають. Продовжуй розповідь наступною частиною — кілька '
-            'речень у своєму образі — і наприкінці коротко звернись до '
-            'гостей.]',
+            '[Службовий сигнал — не читай його вголос. Люди мовчать уже '
+            'понад $waitS секунд після твоєї репліки. Не чекай далі — '
+            'продовжуй сам у своєму образі: якщо ставив питання, лагідно '
+            'повтори його або дай наступну підказку; якщо вів розповідь — '
+            'веди наступну частину. Одна коротка репліка — і знову слухай.]',
           );
         }
       }

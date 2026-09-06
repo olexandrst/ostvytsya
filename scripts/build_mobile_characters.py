@@ -58,7 +58,7 @@ def build_one(char_id: str) -> dict:
         "stop_words": list(ch.stop_words),
         "wake_on_voice": bool(ch.wake_on_voice),
         "inactivity_timeout_s": ch.inactivity_timeout_s,
-        "auto_continue_s": ch.auto_continue_s,
+        "answer_wait_s": ch.answer_wait_s,
     }
 
 

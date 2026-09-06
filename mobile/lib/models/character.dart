@@ -32,10 +32,11 @@ class Character {
   /// квесту з фізичним пошуком — довга.
   int? inactivityTimeoutS;
 
-  /// Екскурсовод: якщо гості мовчать стільки секунд після репліки персонажа,
-  /// застосунок просить його продовжити розповідь наступною частиною — бо
-  /// модель сама по себе говорить лише у відповідь. null — вимкнено.
-  int? autoContinueS;
+  /// Час очікування відповіді, секунд: скільки персонаж мовчки слухає людей
+  /// після своєї репліки, перш ніж застосунок попросить його продовжити
+  /// самому (повторити питання, підказати, вести розповідь далі) — модель
+  /// сама по себе говорить лише у відповідь. 0 — без обмеження.
+  int answerWaitS;
 
   /// Unix-час (секунди) останньої правки користувачем — основа синхронізації
   /// між терміналами («останній запис перемагає»). 0 — типовий персонаж із
@@ -56,7 +57,7 @@ class Character {
     List<String>? stopWords,
     this.wakeOnVoice = false,
     this.inactivityTimeoutS,
-    this.autoContinueS,
+    this.answerWaitS = kDefaultAnswerWaitS,
     this.updatedAt = 0,
   }) : wakeWords = wakeWords ?? const [],
        stopWords = stopWords ?? const [];
@@ -89,7 +90,8 @@ class Character {
       stopWords: _words(json['stop_words']),
       wakeOnVoice: json['wake_on_voice'] == true,
       inactivityTimeoutS: _positiveInt(json['inactivity_timeout_s']),
-      autoContinueS: _positiveInt(json['auto_continue_s']),
+      answerWaitS: ((json['answer_wait_s'] as num?)?.toInt() ?? kDefaultAnswerWaitS)
+          .clamp(0, 3600),
       updatedAt: (json['updated_at'] as num?)?.toInt() ?? 0,
     );
   }
@@ -107,7 +109,7 @@ class Character {
     'stop_words': stopWords,
     'wake_on_voice': wakeOnVoice,
     'inactivity_timeout_s': inactivityTimeoutS,
-    'auto_continue_s': autoContinueS,
+    'answer_wait_s': answerWaitS,
     'updated_at': updatedAt,
   };
 
@@ -124,7 +126,7 @@ class Character {
     List<String>? stopWords,
     bool? wakeOnVoice,
     int? inactivityTimeoutS,
-    int? autoContinueS,
+    int? answerWaitS,
     int? updatedAt,
   }) {
     return Character(
@@ -140,7 +142,7 @@ class Character {
       stopWords: stopWords ?? List<String>.from(this.stopWords),
       wakeOnVoice: wakeOnVoice ?? this.wakeOnVoice,
       inactivityTimeoutS: inactivityTimeoutS ?? this.inactivityTimeoutS,
-      autoContinueS: autoContinueS ?? this.autoContinueS,
+      answerWaitS: answerWaitS ?? this.answerWaitS,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
