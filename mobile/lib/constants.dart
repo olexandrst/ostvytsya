@@ -65,6 +65,11 @@ const String kOpenAiRealtimeModel = 'gpt-realtime-2.1-mini';
 // (див. gemini_transport.dart::_sendGreeting).
 const String kGeminiLiveModel = 'gemini-3.1-flash-live-preview';
 
+/// Адреса веб-панелі за замовчуванням (Render, див. render.yaml): туди йдуть
+/// статуси терміналів, синхронізація персонажів між телефонами й перемоги.
+/// Користувач може замінити її в налаштуваннях; порожнє поле = ця адреса.
+const String kDefaultServerUrl = 'https://ostvytsya.onrender.com';
+
 /// Ціни Gemini 3.1 Flash Live, USD за 1 млн токенів (ai.google.dev/pricing,
 /// вересень 2026) — лише для ОЦІНКИ вартості в журналі сесії («Токени
 /// ходу …»); справжній рахунок виставляє Google. Оновлюй разом із моделлю.

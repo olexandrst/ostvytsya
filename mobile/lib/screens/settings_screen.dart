@@ -54,7 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _selectedOutputId = await _store.getPreferredOutputDeviceId();
     _sessionRecordingEnabled = await _store.getSessionRecordingEnabled();
     _statusReportingEnabled = await _store.getStatusReportingEnabled();
-    _statusServerCtrl.text = await _store.getStatusServerUrl() ?? '';
+    _statusServerCtrl.text = await _store.getStatusServerUrl();
     _geminiCtrl.text = gemini ?? '';
     _openaiCtrl.text = openai ?? '';
     _instanceIdCtrl.text = instanceId;
@@ -335,16 +335,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Вимкнено за замовчуванням. Якщо увімкнути — раз на 5 хвилин '
-                  'застосунок надсилає в панель свій стан: ідентифікатор, чи '
-                  'йде квест, модель телефону, заряд (свій і Bluetooth-'
-                  'пристроїв) та координати. Працює у фоні й ні на що не '
-                  'впливає: якщо сервер недоступний, квест іде як завжди.\n\n'
-                  'Сама адреса сервера (незалежно від перемикача звітів) '
-                  'також вмикає синхронізацію персонажів між терміналами '
-                  '(правка персонажа на одному телефоні за кілька хвилин '
-                  "з'являється на всіх інших) і повідомлення панелі про "
-                  'перемоги команд.',
+                  'Увімкнено за замовчуванням: раз на 5 хвилин застосунок '
+                  'надсилає в панель свій стан: ідентифікатор, чи йде квест, '
+                  'модель телефону, заряд (свій і Bluetooth-пристроїв) та '
+                  'координати. Працює у фоні й ні на що не впливає: якщо '
+                  'сервер недоступний, квест іде як завжди.\n\n'
+                  'Адреса сервера типово — панель парку на Render '
+                  '($kDefaultServerUrl); порожнє поле означає саме її. Адреса '
+                  '(незалежно від перемикача звітів) вмикає синхронізацію '
+                  'персонажів між терміналами (правка персонажа на одному '
+                  "телефоні за кілька хвилин з'являється на всіх інших) і "
+                  'повідомлення панелі про перемоги команд.',
                   style: TextStyle(color: Colors.grey),
                 ),
                 SwitchListTile(
@@ -359,7 +360,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   autocorrect: false,
                   decoration: InputDecoration(
                     labelText: 'Адреса сервера',
-                    hintText: 'https://host:port',
+                    hintText: kDefaultServerUrl,
                     // Адреса важлива і без перемикача звітів (нею ж
                     // вмикається синхронізація персонажів) — тож і помилку
                     // показуємо незалежно від нього.

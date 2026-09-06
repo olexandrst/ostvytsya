@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../constants.dart';
 import 'device_id_service.dart';
 import 'persistent_backup.dart';
 
@@ -209,12 +210,12 @@ class SettingsStore {
     await _syncBackup();
   }
 
-  /// Періодичний звіт статусу термінала у веб-панель. Типово ВИМКНЕНО:
-  /// поки користувач сам не ввімкне й не вкаже адресу сервера, застосунок
-  /// не надсилає нікуди нічого.
+  /// Періодичний звіт статусу термінала у веб-панель. Типово УВІМКНЕНО —
+  /// разом із типовою адресою панелі (kDefaultServerUrl) термінал з'являється
+  /// на /agents одразу після встановлення. Вимикається в налаштуваннях.
   Future<bool> getStatusReportingEnabled() async {
     final v = await _storage.read(key: _statusReportingEnabledName);
-    return v == 'true';
+    return v == null ? true : v == 'true';
   }
 
   Future<void> setStatusReportingEnabled(bool value) async {
@@ -222,9 +223,13 @@ class SettingsStore {
     await _syncBackup();
   }
 
-  /// Адреса веб-панелі у вигляді `https://host:port`.
-  Future<String?> getStatusServerUrl() =>
-      _storage.read(key: _statusServerUrlName);
+  /// Адреса веб-панелі у вигляді `https://host:port`. Якщо користувач нічого
+  /// не вводив (або стер поле) — типова панель kDefaultServerUrl, тож
+  /// синхронізація персонажів, звіти й перемоги працюють «з коробки».
+  Future<String> getStatusServerUrl() async {
+    final v = (await _storage.read(key: _statusServerUrlName))?.trim();
+    return (v == null || v.isEmpty) ? kDefaultServerUrl : v;
+  }
 
   Future<void> setStatusServerUrl(String value) async {
     final v = value.trim();
