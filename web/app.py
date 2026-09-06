@@ -53,6 +53,9 @@ from domovyk_quest.characters_store import (  # noqa: E402  (після зава
     validate_id,
 )
 from domovyk_quest.prompt import build_system_instruction  # noqa: E402
+# Типові персонажі з комплекту — файли characters/*.yaml у репозиторії
+# (джерело для «Скинути до типового» незалежно від активного бекенду).
+from domovyk_quest import characters as bundled_characters  # noqa: E402
 
 from .auth import MIN_PASSWORD_LENGTH, Auth, AuthError, session_secret
 from .character_forms import payload_from_form as _payload_from_form
@@ -320,7 +323,20 @@ async def character_edit(char_id: str, request: Request,
         "gemini_voice_labels": GEMINI_VOICE_LABELS,
         # Промпт зібрано зі сценарію (а не написаний вручну) — про це варто сказати.
         "from_scenario": has_scenario and not own_prompt,
+        "has_default": _has_bundled_default(char_id),
     })
+
+
+def _has_bundled_default(char_id: str) -> bool:
+    """Чи є для персонажа типова версія з комплекту (characters/*.yaml), до
+    якої можна скинути. У файловому бекенді YAML і є сховищем — скидати нема
+    до чого."""
+    if storage_backend() == "files":
+        return False
+    try:
+        return bundled_characters.character_path(char_id).exists()
+    except CharacterError:
+        return False
 
 
 @app.get("/quest/{char_id}", response_class=HTMLResponse)
@@ -396,6 +412,32 @@ async def api_clone(char_id: str, request: Request,
         return JSONResponse({"error": str(exc)}, status_code=400)
     log.info("Клоновано «%s» → «%s»", char_id, new_id)
     return {"ok": True, "id": new_id, "display_name": new_name}
+
+
+@app.post("/api/characters/{char_id}/reset")
+async def api_reset(char_id: str, request: Request,
+                    user: str = Depends(require_login)):
+    """Скинути персонажа до типової версії з комплекту (characters/*.yaml):
+    сценарій, промпт, голос, кодові слова — усе як у репозиторії."""
+    body = await request.json()
+    check_csrf(request, body.get("csrf"))
+    if not _has_bundled_default(char_id):
+        return JSONResponse(
+            {"error": "Для цього персонажа немає типової версії з комплекту."},
+            status_code=400,
+        )
+    try:
+        fresh = bundled_characters.read_raw(char_id)
+        try:
+            read_raw(char_id)
+            exists = True
+        except CharacterError:
+            exists = False
+        save_raw(char_id, fresh, create=not exists)
+    except CharacterError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    log.info("Скинуто персонажа «%s» до типового", char_id)
+    return {"ok": True, "id": char_id}
 
 
 @app.post("/api/characters/{char_id}/delete")

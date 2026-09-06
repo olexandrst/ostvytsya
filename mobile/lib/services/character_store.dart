@@ -212,6 +212,28 @@ class CharacterStore {
     return _fileFor(dir, id).exists();
   }
 
+  /// Чи є для цього id типова версія з комплекту (assets) — лише для таких
+  /// персонажів у редакторі є «Скинути до типового».
+  static bool hasDefault(String id) => _defaultIds.contains(id);
+
+  /// Типова версія персонажа з комплекту APK (updated_at = 0), як є.
+  Future<Character?> loadDefault(String id) async {
+    if (!hasDefault(id)) return null;
+    final raw = await rootBundle.loadString('assets/characters/$id.json');
+    return Character.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+  }
+
+  /// Скинути персонажа до типової версії з комплекту. Зберігається як
+  /// звичайна правка користувача (touch: true): таймстамп стає новішим за
+  /// відредаговану версію, тож скидання доїде на всі інші термінали через
+  /// синхронізацію, а не програє їй за правилом «останній запис перемагає».
+  Future<Character?> resetToDefault(String id) async {
+    final fresh = await loadDefault(id);
+    if (fresh == null) return null;
+    await save(fresh);
+    return fresh;
+  }
+
   /// Безпечний ідентифікатор із назви — латиниця/цифри/дефіс/підкреслення,
   /// з перевіркою унікальності (додає -2, -3, ... за потреби).
   Future<String> uniqueIdFromName(String name) async {

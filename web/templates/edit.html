@@ -79,6 +79,13 @@
     <a class="btn" href="/quest/{{ char.id }}">▶ Запустити</a>
     {% endif %}
     <span class="spacer"></span>
+    {% if not creating and has_default %}
+    <button class="btn btn-ghost" type="button" id="reset-default"
+            data-id="{{ char.id }}" data-name="{{ char.display_name }}"
+            title="Повернути версію з комплекту (characters/*.yaml): сценарій, промпт, голос, кодові слова">
+      ↺ Скинути до типового
+    </button>
+    {% endif %}
     <a class="btn btn-ghost" href="/">← Назад</a>
   </div>
 </form>

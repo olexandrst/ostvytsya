@@ -130,6 +130,53 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
     }
   }
 
+  bool get _hasDefault =>
+      !_isNew && CharacterStore.hasDefault(widget.character!.id);
+
+  /// Повернути персонажа з комплекту до типової версії (сценарій, голос,
+  /// кодові слова, поведінка сесії) — усі правки на цьому й інших
+  /// терміналах перекриваються, бо скидання синхронізується як нова правка.
+  Future<void> _resetToDefault() async {
+    final c = widget.character!;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Скинути до типового?'),
+        content: Text(
+          'Персонаж «${c.displayName}» повернеться до версії з комплекту '
+          'застосунку: промпт, голос, кодові слова й налаштування сесії. '
+          'Усі правки буде втрачено — і на інших терміналах теж (скидання '
+          'синхронізується як звичайна правка).',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Скасувати'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Скинути'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      final fresh = await widget.store.resetToDefault(c.id);
+      if (!mounted) return;
+      if (fresh == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Типової версії для цього персонажа немає.')),
+        );
+        return;
+      }
+      Navigator.pop(context, true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -321,6 +368,23 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
               'додаються автоматично до кожного персонажа — їх не треба писати тут.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
+            if (_hasDefault) ...[
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _saving ? null : _resetToDefault,
+                icon: const Icon(Icons.restart_alt),
+                label: const Text('Скинути до типового'),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Повернути версію з комплекту застосунку (промпт, голос, '
+                'кодові слова, налаштування сесії). Правки на всіх '
+                'терміналах буде перекрито.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ],
             const SizedBox(height: 24),
           ],
         ),

@@ -30,6 +30,35 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  // «Скинути до типового»: персонаж повертається до версії з комплекту
+  // (characters/*.yaml у репозиторії) — усі правки у веб-редакторі втрачаються.
+  const resetBtn = document.getElementById("reset-default");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", async () => {
+      const id = resetBtn.dataset.id;
+      const name = resetBtn.dataset.name || id;
+      if (!window.confirm(
+        `Скинути персонажа «${name}» до типової версії з комплекту? ` +
+        "Усі правки промпту, голосу й кодових слів у веб-редакторі буде втрачено."
+      )) return;
+      resetBtn.disabled = true;
+      try {
+        const resp = await fetch(`/api/characters/${encodeURIComponent(id)}/reset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ csrf: window.CSRF }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "не вдалося скинути");
+        // Перезавантажуємо сторінку — форма має показати типову версію.
+        window.location.reload();
+      } catch (err) {
+        show("⚠️ " + (err.message || err), "error");
+        resetBtn.disabled = false;
+      }
+    });
+  }
+
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
