@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../models/character.dart';
 import '../services/character_store.dart';
 import '../services/crash_log.dart';
+import '../services/status_reporter.dart';
 import '../services/vosk_model_downloader.dart';
 import 'character_edit_screen.dart';
 import 'logs_screen.dart';
@@ -34,7 +36,23 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _load();
     _preloadVoskModel();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkLastCrash());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkLastCrash();
+      _requestLocationForReports();
+    });
+  }
+
+  /// Координати термінала для панелі («де стоїть цей телефон у парку»):
+  /// дозвіл питаємо одразу на головному екрані, щоб свіжовстановлений
+  /// термінал звітував із координатами, не чекаючи, поки хтось відкриє
+  /// налаштування чи запустить квест. Після відповіді — одразу звіт.
+  Future<void> _requestLocationForReports() async {
+    try {
+      final status = await Permission.locationWhenInUse.request();
+      if (status.isGranted) StatusReporter.instance.reportNow();
+    } catch (_) {
+      // Дозвіл — не привід ламати головний екран; звіт піде без координат.
+    }
   }
 
   Future<void> _load() async {

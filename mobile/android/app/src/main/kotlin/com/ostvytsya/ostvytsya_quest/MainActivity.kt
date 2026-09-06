@@ -173,7 +173,12 @@ class MainActivity : FlutterActivity() {
                         )
                     }
                     "collectTelemetry" -> {
-                        result.success(DeviceTelemetry.collect(applicationContext))
+                        // Асинхронно: якщо останніх координат немає, збір
+                        // замовляє нове визначення (до ~15 с) і відповідає
+                        // потім — відповідь приходить на головному потоці.
+                        DeviceTelemetry.collectAsync(applicationContext) { data ->
+                            result.success(data)
+                        }
                     }
                     "memoryInfo" -> {
                         result.success(DeviceTelemetry.memory(applicationContext))

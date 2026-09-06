@@ -8,10 +8,14 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.CancellationSignal
 import android.os.Debug
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.telephony.TelephonyManager
 import android.util.Log
@@ -26,6 +30,40 @@ import android.util.Log
  */
 object DeviceTelemetry {
     private const val TAG = "DeviceTelemetry"
+
+    /** Остання відома точка, старша за це, — привід замовити нове визначення. */
+    private const val MAX_LOCATION_AGE_MS = 15L * 60L * 1000L
+
+    /** Скільки чекати на нове визначення координат, перш ніж звітувати без них. */
+    private const val LOCATION_TIMEOUT_MS = 15_000L
+
+    /**
+     * Дані для звіту з координатами «за можливості свіжими»: спершу остання
+     * відома точка; якщо її немає або вона старша за [MAX_LOCATION_AGE_MS] —
+     * одноразовий запит нового визначення з тайм-аутом. Термінал у парку
+     * стоїть на місці, і без жодного застосунку з картами «останньої відомої»
+     * точки в системі може просто не бути — тоді панель ніколи не показала б
+     * координат. Виклик [callback] — рівно один, на головному потоці.
+     */
+    fun collectAsync(context: Context, callback: (Map<String, Any?>) -> Unit) {
+        val base = collect(context)
+        val last = lastLocation(context)
+        val freshEnough = last != null &&
+            System.currentTimeMillis() - last.time <= MAX_LOCATION_AGE_MS
+        if (freshEnough || !hasLocationPermission(context)) {
+            callback(base)
+            return
+        }
+        requestCurrentLocation(context) { located ->
+            val chosen = located ?: last
+            callback(
+                base + mapOf(
+                    "latitude" to chosen?.latitude,
+                    "longitude" to chosen?.longitude
+                )
+            )
+        }
+    }
 
     fun collect(context: Context): Map<String, Any?> {
         val location = lastLocation(context)
@@ -166,15 +204,74 @@ object DeviceTelemetry {
         null
     }
 
+    private fun hasLocationPermission(context: Context): Boolean =
+        hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ||
+            hasPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)
+
     /**
-     * Останні відомі координати. Навмисно НЕ замовляємо нове визначення: звіт
-     * має бути дешевим і миттєвим, а для «де стоїть термінал у парку» точності
-     * останньої відомої точки цілком достатньо.
+     * Одноразове нове визначення координат із тайм-аутом. Провайдер: fused
+     * (Android 12+), інакше мережевий — вони дають точку за секунди навіть у
+     * приміщенні; GPS — лише якщо інших немає (холодний старт може тривати
+     * довше за тайм-аут). Колбек — рівно один раз, на головному потоці.
+     */
+    private fun requestCurrentLocation(context: Context, callback: (Location?) -> Unit) {
+        val handler = Handler(Looper.getMainLooper())
+        var done = false
+        fun finish(location: Location?) {
+            if (done) return
+            done = true
+            handler.post { callback(location) }
+        }
+        try {
+            val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val candidates = buildList {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) add(LocationManager.FUSED_PROVIDER)
+                add(LocationManager.NETWORK_PROVIDER)
+                add(LocationManager.GPS_PROVIDER)
+            }
+            val provider = candidates.firstOrNull { p ->
+                try { lm.isProviderEnabled(p) } catch (_: Throwable) { false }
+            }
+            if (provider == null) {
+                finish(null)
+                return
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val signal = CancellationSignal()
+                handler.postDelayed({
+                    if (!done) {
+                        signal.cancel()
+                        finish(null)
+                    }
+                }, LOCATION_TIMEOUT_MS)
+                lm.getCurrentLocation(provider, signal, context.mainExecutor) { location ->
+                    finish(location)
+                }
+            } else {
+                val listener = object : LocationListener {
+                    override fun onLocationChanged(location: Location) = finish(location)
+                }
+                @Suppress("DEPRECATION")
+                lm.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+                handler.postDelayed({
+                    if (!done) {
+                        try { lm.removeUpdates(listener) } catch (_: Throwable) {}
+                        finish(null)
+                    }
+                }, LOCATION_TIMEOUT_MS)
+            }
+        } catch (err: Throwable) {
+            Log.w(TAG, "Нове визначення координат не вдалося", err)
+            finish(null)
+        }
+    }
+
+    /**
+     * Останні відомі координати (дешево й миттєво). Свіже визначення, якщо
+     * ця точка стара чи її немає, замовляє [collectAsync].
      */
     private fun lastLocation(context: Context): Location? {
-        val fine = hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
-        val coarse = hasPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)
-        if (!fine && !coarse) return null
+        if (!hasLocationPermission(context)) return null
         return try {
             val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
             var best: Location? = null

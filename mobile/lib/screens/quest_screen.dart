@@ -56,6 +56,9 @@ class _QuestScreenState extends State<QuestScreen> {
     // побачить Bluetooth-навушники/мікрофони (Android 12+ приховує їх без
     // цього дозволу), провідні й вбудований пристрій лишаються доступні.
     await Permission.bluetoothConnect.request();
+    // Координати термінала для панелі («де стоїть цей телефон у парку»).
+    // Не критично: без дозволу звіт іде без координат.
+    await Permission.locationWhenInUse.request();
 
     final character = widget.character;
     final apiKey = character.provider == 'google'

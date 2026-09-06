@@ -61,6 +61,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // Без цього дозволу Android 12+ приховує Bluetooth-пристрої зі списку
     // (AudioManager.getDevices) — без нього автопідбір їх просто не бачить.
     await Permission.bluetoothConnect.request();
+    // Координати термінала в панелі: без цього дозволу Android не віддає
+    // місцеположення, і колонка «Координати» лишається порожньою.
+    await Permission.locationWhenInUse.request();
     await _loadDevices();
     if (mounted) setState(() => _loading = false);
   }
