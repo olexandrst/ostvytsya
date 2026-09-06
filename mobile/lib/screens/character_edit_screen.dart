@@ -32,6 +32,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
   late String _geminiVoice;
   late double _speechSpeed;
   late bool _wakeOnVoice;
+  late bool _contextCompression;
   bool _saving = false;
 
   bool get _isNew => widget.character == null;
@@ -56,6 +57,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
       text: (c?.answerWaitS ?? kDefaultAnswerWaitS).toString(),
     );
     _wakeOnVoice = c?.wakeOnVoice ?? false;
+    _contextCompression = c?.contextCompression ?? true;
     _provider = c?.provider ?? 'google';
     _openaiVoice = (c?.openaiVoice.isNotEmpty ?? false)
         ? c!.openaiVoice
@@ -119,6 +121,7 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
         wakeOnVoice: _wakeOnVoice,
         inactivityTimeoutS: _optionalInt(_idleTimeoutCtrl),
         answerWaitS: _optionalInt(_answerWaitCtrl) ?? kDefaultAnswerWaitS,
+        contextCompression: _contextCompression,
       );
       await widget.store.save(character);
       if (mounted) Navigator.pop(context, true);
@@ -283,6 +286,20 @@ class _CharacterEditScreenState extends State<CharacterEditScreen> {
                 helperMaxLines: 4,
               ),
               validator: (v) => _validateOptionalInt(v, 0),
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Стискати контекст розмови (економія)'),
+              subtitle: const Text(
+                'Персонаж пам\'ятає лише останні ~8–15 хвилин розмови, зате '
+                'довга сесія коштує у 2–3 рази дешевше. Вимкни для квестів, '
+                'де треба пам\'ятати все сказане від початку (Повітруля веде '
+                'лік знайдених слів). Діє з наступного запуску квесту.',
+              ),
+              isThreeLine: true,
+              value: _contextCompression,
+              onChanged: (v) => setState(() => _contextCompression = v),
             ),
             const SizedBox(height: 16),
             TextFormField(

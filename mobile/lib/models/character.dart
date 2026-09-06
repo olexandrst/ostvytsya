@@ -38,6 +38,14 @@ class Character {
   /// сама по себе говорить лише у відповідь. 0 — без обмеження.
   int answerWaitS;
 
+  /// Стискати контекст розмови (Gemini contextWindowCompression з явними
+  /// порогами kGeminiContextTriggerTokens/kGeminiContextTargetTokens):
+  /// персонаж пам'ятає лише останні ~8–15 хвилин, зате довга сесія коштує у
+  /// 2–3 рази дешевше, бо модель на кожному ході перечитує всю історію.
+  /// false — типова поведінка Google (стискання лише при переповненні вікна
+  /// моделі): для квестів, де треба пам'ятати все від початку (Повітруля).
+  bool contextCompression;
+
   /// Unix-час (секунди) останньої правки користувачем — основа синхронізації
   /// між терміналами («останній запис перемагає»). 0 — типовий персонаж із
   /// комплекту, якого ще ніхто не редагував: будь-яка правка на будь-якому
@@ -58,6 +66,7 @@ class Character {
     this.wakeOnVoice = false,
     this.inactivityTimeoutS,
     this.answerWaitS = kDefaultAnswerWaitS,
+    this.contextCompression = true,
     this.updatedAt = 0,
   }) : wakeWords = wakeWords ?? const [],
        stopWords = stopWords ?? const [];
@@ -92,6 +101,8 @@ class Character {
       inactivityTimeoutS: _positiveInt(json['inactivity_timeout_s']),
       answerWaitS: ((json['answer_wait_s'] as num?)?.toInt() ?? kDefaultAnswerWaitS)
           .clamp(0, 3600),
+      // Немає поля (старий JSON) — увімкнено; вимикає лише явне false.
+      contextCompression: json['context_compression'] != false,
       updatedAt: (json['updated_at'] as num?)?.toInt() ?? 0,
     );
   }
@@ -110,6 +121,7 @@ class Character {
     'wake_on_voice': wakeOnVoice,
     'inactivity_timeout_s': inactivityTimeoutS,
     'answer_wait_s': answerWaitS,
+    'context_compression': contextCompression,
     'updated_at': updatedAt,
   };
 
@@ -127,6 +139,7 @@ class Character {
     bool? wakeOnVoice,
     int? inactivityTimeoutS,
     int? answerWaitS,
+    bool? contextCompression,
     int? updatedAt,
   }) {
     return Character(
@@ -143,6 +156,7 @@ class Character {
       wakeOnVoice: wakeOnVoice ?? this.wakeOnVoice,
       inactivityTimeoutS: inactivityTimeoutS ?? this.inactivityTimeoutS,
       answerWaitS: answerWaitS ?? this.answerWaitS,
+      contextCompression: contextCompression ?? this.contextCompression,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }

@@ -14,5 +14,6 @@
   "stop_words": [],
   "wake_on_voice": true,
   "inactivity_timeout_s": 60,
-  "answer_wait_s": 0
+  "answer_wait_s": 0,
+  "context_compression": true
 }

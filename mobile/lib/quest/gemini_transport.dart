@@ -282,7 +282,18 @@ class GeminiTransport implements QuestTransport {
       },
       'inputAudioTranscription': {},
       'outputAudioTranscription': {},
-      'contextWindowCompression': {'slidingWindow': {}},
+      // Стискання контексту — налаштування персонажа. Увімкнено: явні
+      // пороги (пам'ять ~8–15 хв, історія не перечитується цілком на
+      // кожному ході — дешевше). Вимкнено: типове ковзне вікно Google без
+      // порогів — стискає лише при переповненні вікна моделі, тож персонаж
+      // пам'ятає весь квест; ковзне вікно лишаємо, бо без нього Live API
+      // обмежує аудіо-сесію ~15 хвилинами.
+      'contextWindowCompression': character.contextCompression
+          ? {
+              'triggerTokens': kGeminiContextTriggerTokens,
+              'slidingWindow': {'targetTokens': kGeminiContextTargetTokens},
+            }
+          : {'slidingWindow': {}},
       // Просимо сервер видавати handle для відновлення; з handle —
       // відновлюємо попередню сесію замість нової.
       'sessionResumption': resumeHandle == null ? {} : {'handle': resumeHandle},

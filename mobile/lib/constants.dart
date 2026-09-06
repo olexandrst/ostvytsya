@@ -73,6 +73,16 @@ const double kGeminiTextInputUsdPer1M = 0.75;
 const double kGeminiAudioOutputUsdPer1M = 12.0;
 const double kGeminiTextOutputUsdPer1M = 4.5;
 
+/// Пороги стискання контексту Gemini Live для персонажів із увімкненим
+/// Character.contextCompression: коли контекст ходу перевищує
+/// [kGeminiContextTriggerTokens], сервер обрізає найстарішу історію до
+/// [kGeminiContextTargetTokens]. При ~25–32 аудіо-токенах за секунду це
+/// пам'ять на останні ~8–15 хвилин розмови (плюс системна інструкція, яка не
+/// обрізається). Без цього модель на кожному ході перечитує й оплачує ВСЮ
+/// історію, і година суцільної сесії коштує у 2–3 рази дорожче (див. README).
+const int kGeminiContextTriggerTokens = 24000;
+const int kGeminiContextTargetTokens = 12000;
+
 /// Мовний блок — вимога говорити ВИКЛЮЧНО українською, без іноземного
 /// акценту. Стосується всіх персонажів, додається до системного промпту
 /// завжди (портовано з domovyk_quest/prompt.py::LANGUAGE_RULES).

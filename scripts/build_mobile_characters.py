@@ -59,6 +59,7 @@ def build_one(char_id: str) -> dict:
         "wake_on_voice": bool(ch.wake_on_voice),
         "inactivity_timeout_s": ch.inactivity_timeout_s,
         "answer_wait_s": ch.answer_wait_s,
+        "context_compression": bool(ch.context_compression),
     }
 
 
@@ -74,7 +75,10 @@ def main(argv: list[str]) -> int:
         print(f"{cid:12s} voice={doc['voice']:12s} win={doc['win_word'] or '—':14s} "
               f"stop={','.join(doc['stop_words']) or '—':10s} "
               f"voice-wake={'yes' if doc['wake_on_voice'] else 'no':3s} "
-              f"idle={doc['inactivity_timeout_s'] or 'default'} → {path.relative_to(ROOT)}")
+              f"idle={doc['inactivity_timeout_s'] or 'default'} "
+              f"wait={doc['answer_wait_s']} "
+              f"compress={'yes' if doc['context_compression'] else 'no':3s} "
+              f"→ {path.relative_to(ROOT)}")
     return 0
 
 

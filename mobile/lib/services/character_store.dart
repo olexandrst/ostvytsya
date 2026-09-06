@@ -74,18 +74,33 @@ class CharacterStore {
     await file.writeAsString(jsonEncode(tombs), flush: true);
   }
 
-  /// Скопіювати типових персонажів із assets при першому запуску (лише ті,
-  /// файлів яких ще немає на диску — щоб не затирати правки користувача).
-  /// Персонажів із «надгробком» не відроджуємо: їх свідомо видалили (напр.
-  /// на іншому терміналі), і повернути їх може лише нове збереження.
+  /// Скопіювати типових персонажів із assets: тих, файлів яких ще немає на
+  /// диску, — і ОНОВИТИ тих, кого ніхто ніколи не редагував (updated_at ==
+  /// 0). Правка на будь-якому телефоні ставить updated_at > 0 і доїжджає
+  /// сюди синхронізацією, тож нуль означає «чиста копія з комплекту» — її
+  /// безпечно замінити новою версією з оновленого APK (виправлений сценарій,
+  /// нове налаштування). Відредагованих персонажів не чіпаємо. Персонажів
+  /// із «надгробком» не відроджуємо: їх свідомо видалили (напр. на іншому
+  /// терміналі), і повернути їх може лише нове збереження.
   Future<void> ensureDefaults() async {
     final dir = await _charactersDir();
     final tombs = await tombstones();
     for (final id in _defaultIds) {
       if (tombs.containsKey(id)) continue;
       final file = _fileFor(dir, id);
-      if (await file.exists()) continue;
       final raw = await rootBundle.loadString('assets/characters/$id.json');
+      if (await file.exists()) {
+        try {
+          final current = await file.readAsString();
+          if (current == raw) continue;
+          final onDisk = jsonDecode(current);
+          final edited =
+              onDisk is Map && ((onDisk['updated_at'] as num?)?.toInt() ?? 0) > 0;
+          if (edited) continue;
+        } catch (_) {
+          // Пошкоджений файл — перезаписуємо чистою копією з комплекту.
+        }
+      }
       await file.writeAsString(raw, flush: true);
     }
   }

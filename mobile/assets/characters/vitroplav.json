@@ -20,5 +20,6 @@
   ],
   "wake_on_voice": false,
   "inactivity_timeout_s": 600,
-  "answer_wait_s": 10
+  "answer_wait_s": 10,
+  "context_compression": true
 }
