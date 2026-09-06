@@ -28,12 +28,13 @@
           <th>Координати</th>
           <th>Перемоги</th>
           <th>Звіт</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
         {% for a in agents %}
         {% set w = win_stats.get(a.agent_id) %}
-        <tr class="{{ 'is-offline' if not a.online else '' }}">
+        <tr class="{{ 'is-offline' if not a.online else '' }}" data-agent="{{ a.agent_id }}">
           <td>
             <strong>{{ a.agent_id }}</strong>
             {% if a.app_version %}<div class="muted small">{{ a.app_version }}</div>{% endif %}
@@ -87,6 +88,13 @@
               {{ (a.seconds_ago // 3600) }} год тому
             {% endif %}
           </td>
+          <td>
+            <button class="btn btn-ghost btn-sm" type="button"
+                    data-delete-agent="{{ a.agent_id }}"
+                    title="Прибрати термінал зі списку. Якщо телефон і далі працює — з'явиться знову з наступним звітом">
+              🗑
+            </button>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -97,7 +105,9 @@
 
 <p class="muted small">
   Термінали звітують раз на 5 хвилин. Той, від якого нічого не чути понад
-  12 хвилин, показаний приглушено.
+  12 хвилин, показаний приглушено. 🗑 прибирає термінал зі списку (старий
+  ідентифікатор, списаний телефон); увімкнений телефон з'явиться знову зі
+  своїм наступним звітом.
 </p>
 
 <div class="head-row">
@@ -137,8 +147,33 @@
 </div>
 {% endif %}
 
+<script>window.CSRF = {{ csrf|tojson }};</script>
 <script>
   // Сторінка — це зріз стану, тож просто оновлюємо її раз на пів хвилини.
   setTimeout(function () { window.location.reload(); }, 30000);
+
+  // Видалення термінала зі списку.
+  document.querySelectorAll("[data-delete-agent]").forEach(function (btn) {
+    btn.addEventListener("click", async function () {
+      var id = btn.dataset.deleteAgent;
+      if (!window.confirm("Прибрати термінал «" + id + "» зі списку? " +
+          "Якщо телефон іще працює, він з'явиться знову з наступним звітом.")) return;
+      btn.disabled = true;
+      try {
+        var resp = await fetch("/api/agents/" + encodeURIComponent(id) + "/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ csrf: window.CSRF }),
+        });
+        var data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "не вдалося видалити");
+        var row = document.querySelector('tr[data-agent="' + CSS.escape(id) + '"]');
+        if (row) row.remove();
+      } catch (err) {
+        window.alert("⚠️ " + (err.message || err));
+        btn.disabled = false;
+      }
+    });
+  });
 </script>
 {% endblock %}

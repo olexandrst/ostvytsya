@@ -208,6 +208,25 @@ class AgentRegistry:
         self._persist(status, evicted)
         return status
 
+    def remove(self, agent_id: str) -> bool:
+        """Прибрати термінал зі списку (кеш і база). Повертає False, якщо
+        такого немає. Якщо телефон і далі працює, він знову з'явиться зі
+        своїм наступним звітом (раз на 5 хвилин) — це прибирання саме
+        «мертвих» записів: старих ідентифікаторів, списаних телефонів."""
+        cleaned = _clean_str(agent_id, limit=64)
+        if not cleaned:
+            return False
+        self._ensure_loaded()
+        with self._lock:
+            existed = self._agents.pop(cleaned, None) is not None
+        try:
+            with db.connect() as conn:
+                cur = conn.execute("DELETE FROM agents WHERE agent_id = ?", (cleaned,))
+                existed = existed or cur.rowcount > 0
+        except Exception:  # noqa: BLE001 — кеш уже почищено; база доженеться
+            log.exception("Не вдалося видалити термінал із бази")
+        return existed
+
     def all(self) -> list[AgentStatus]:
         """Усі термінали: спершу активні, далі — за свіжістю звіту."""
         self._ensure_loaded()

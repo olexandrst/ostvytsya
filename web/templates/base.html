@@ -9,10 +9,12 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">🌳 Оствиця</a>
+    <a class="brand" href="{{ '/' if characters_ui else '/agents' }}">🌳 Оствиця</a>
     {% if user %}
     <div class="topbar-right">
+      {% if characters_ui %}
       <a class="btn btn-ghost" href="/">Персонажі</a>
+      {% endif %}
       <a class="btn btn-ghost" href="/agents">Термінали</a>
       <a class="btn btn-ghost" href="/account" title="Змінити пароль">{{ user }}</a>
       <form method="post" action="/logout" class="inline">

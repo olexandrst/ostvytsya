@@ -97,6 +97,25 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+
+def _characters_ui_enabled() -> bool:
+    """Чи показувати в панелі розділ «Персонажі» (список, редактор, квест у
+    браузері). ТИМЧАСОВО ПРИХОВАНО: веб-редактор не синхронізується з
+    телефонами (окремі сховища), тож правки в ньому лише збивають з пантелику.
+    Код і API лишаються на місці; повернути — OSTVYTSYA_CHARACTERS_UI=1."""
+    import os
+    return (os.environ.get("OSTVYTSYA_CHARACTERS_UI") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+templates.env.globals["characters_ui"] = _characters_ui_enabled()
+
+
+def _require_characters_ui() -> None:
+    if not _characters_ui_enabled():
+        raise HTTPException(status_code=404, detail="Розділ «Персонажі» приховано.")
+
 auth = Auth()
 
 # Файл із початковим паролем адміністратора — лише коли пароль довелося
@@ -258,6 +277,9 @@ async def account_submit(request: Request, user: str = Depends(require_login),
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, user: str = Depends(require_login)):
+    if not _characters_ui_enabled():
+        # Головна панелі зараз — «Термінали».
+        return RedirectResponse("/agents", status_code=303)
     return templates.TemplateResponse(request, "index.html", {
         "user": user,
         "csrf": csrf_token(request),
@@ -268,6 +290,7 @@ async def index(request: Request, user: str = Depends(require_login)):
 
 @app.get("/characters/new", response_class=HTMLResponse)
 async def character_new(request: Request, user: str = Depends(require_login)):
+    _require_characters_ui()
     return templates.TemplateResponse(request, "edit.html", {
         "user": user,
         "csrf": csrf_token(request),
@@ -293,6 +316,7 @@ async def character_new(request: Request, user: str = Depends(require_login)):
 @app.get("/characters/{char_id}/edit", response_class=HTMLResponse)
 async def character_edit(char_id: str, request: Request,
                          user: str = Depends(require_login)):
+    _require_characters_ui()
     try:
         raw = read_raw(char_id)
     except CharacterError as exc:
@@ -342,6 +366,7 @@ def _has_bundled_default(char_id: str) -> bool:
 @app.get("/quest/{char_id}", response_class=HTMLResponse)
 async def quest_page(char_id: str, request: Request,
                      user: str = Depends(require_login)):
+    _require_characters_ui()
     try:
         raw = read_raw(char_id)
     except CharacterError as exc:
@@ -615,6 +640,20 @@ async def agents_page(request: Request, user: str = Depends(require_login)):
         "recent_wins": win_log.recent(50),
         "model": model_name(),
     })
+
+
+@app.post("/api/agents/{agent_id}/delete")
+async def api_agent_delete(agent_id: str, request: Request,
+                           user: str = Depends(require_login)):
+    """Прибрати термінал зі списку «Термінали» (кеш і база). Історія перемог
+    цього термінала лишається. Увімкнений телефон з'явиться знову зі своїм
+    наступним звітом."""
+    body = await request.json()
+    check_csrf(request, body.get("csrf"))
+    if not agent_registry.remove(agent_id):
+        return JSONResponse({"error": "Такого термінала немає."}, status_code=404)
+    log.info("Термінал «%s» прибрано зі списку", agent_id)
+    return {"ok": True}
 
 
 @app.head("/")
