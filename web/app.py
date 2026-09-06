@@ -98,8 +98,11 @@ auth = Auth()
 
 # Файл із початковим паролем адміністратора — лише коли пароль довелося
 # згенерувати самим (нічого не задано в .env). Зникає після першої зміни
-# пароля в панелі.
-INITIAL_PASSWORD_FILE = PROJECT_ROOT / "data" / "initial-admin-password.txt"
+# пароля в панелі. Лежить ПОРУЧ із базою (OSTVYTSYA_DB_PATH): на хостингу з
+# постійним диском тека проєкту ефемерна, а тека бази — ні.
+from domovyk_quest.db import db_path as _db_path  # noqa: E402
+
+INITIAL_PASSWORD_FILE = _db_path().parent / "initial-admin-password.txt"
 
 
 def _bootstrap_admin() -> None:

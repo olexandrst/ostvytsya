@@ -1,27 +1,60 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  Деплой веб-режиму на Render (https://render.com).
+#  Деплой веб-панелі на Render (https://render.com) — Blueprint.
+#
+#  Render → New → Blueprint → обрати цей репозиторій → Apply: сервіс, диск і
+#  змінні створяться з цього файлу. Покрокова інструкція — README, розділ
+#  «Деплой на Render».
+#
+#  ‼️ ПОСТІЙНИЙ ДИСК. Диск Render ефемерний: усе, що сервіс записав у свою
+#  теку, зникає при кожному деплої та перезапуску. База панелі — один файл
+#  SQLite (адміністратор, персонажі з телефонів, персонажі редактора, статуси
+#  терміналів, перемоги) — тож без постійного диска її довелося б створювати
+#  заново щоразу. Блок `disk:` нижче монтує Persistent Disk на 1 ГБ у
+#  /var/data, а OSTVYTSYA_DB_PATH кладе базу саме туди. Диск створюється
+#  порожнім; при першому старті панель сама створює файл бази, схему й
+#  адміністратора — жодних ручних кроків.
+#
+#  Обмеження Render для сервісів із диском: лише платний план (Starter і
+#  вище — free-план дисків не підтримує), рівно один інстанс і деплой із
+#  короткою паузою замість zero-downtime. Диск оплачується окремо
+#  (~$0.25/ГБ на місяць). Розмір можна лише збільшити, не зменшити.
 #
 #  Порт слухається за змінною PORT, яку Render задає сам, і на 0.0.0.0 —
 #  інакше платформа не бачить сервіс («No open ports detected on 0.0.0.0»).
 #
-#  Після створення сервісу впиши секрети в Render → Environment:
-#      OPENAI_API_KEY          — ключ OpenAI
+#  Секрети (sync: false) впиши в Render → сервіс → Environment:
+#      OPENAI_API_KEY          — ключ OpenAI (веб-квест у браузері)
 #      GEMINI_API_KEY          — лише якщо є персонажі з моделлю Google
-#      OSTVYTSYA_WEB_PASSWORD  — пароль для входу
-#  (OSTVYTSYA_WEB_SECRET Render згенерує сам — див. generateValue нижче.)
+#      OSTVYTSYA_WEB_PASSWORD  — початковий пароль адміністратора; читається
+#                                ЛИШЕ при першому старті з порожньою базою,
+#                                далі пароль живе в базі (/account)
+#  OSTVYTSYA_WEB_SECRET Render згенерує сам (generateValue).
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
   - type: web
     name: ostvytsya-web
     runtime: python
-    plan: free
+    # Диски доступні лише на платних планах; free не підходить.
+    plan: starter
+    region: frankfurt
     buildCommand: pip install -r requirements-web.txt
     startCommand: python -m web
     healthCheckPath: /api/health
+    # Постійний диск для бази панелі. Монтується в /var/data.
+    disk:
+      name: ostvytsya-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
+      # База панелі (SQLite) — на постійному диску, а не в теці сервісу.
+      - key: OSTVYTSYA_DB_PATH
+        value: /var/data/ostvytsya.db
+      # Персонажі редактора — у тій самій базі на диску.
+      - key: OSTVYTSYA_STORAGE_BACKEND
+        value: sqlite
       # Ключ підпису сесійної куки: Render згенерує випадковий і збереже його,
       # тож сесії живуть між перезапусками.
       - key: OSTVYTSYA_WEB_SECRET
@@ -39,18 +72,12 @@ services:
         value: gpt-realtime-2.1-mini
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  ‼️ Диск на Render ефемерний: база панелі (SQLite, data/ostvytsya.db —
-#  термінали, персонажі з телефонів, адміністратор) зникне при передеплої.
-#  Або прив'яжи Persistent Disk і задай OSTVYTSYA_DB_PATH на нього
-#  (напр. /var/data/ostvytsya.db), або для персонажів редактора увімкни
-#  PostgreSQL нижче (статуси терміналів і адміністратор усе одно лишаться в
-#  SQLite — на диску).
-#
-#  Опційно: персонажі редактора в Render Managed PostgreSQL.
-#    1. розкоментуй блок `databases:` і `envVars: - key: DATABASE_URL` нижче;
-#    2. постав storage.backend: postgresql у config.yaml (або змінну
-#       OSTVYTSYA_STORAGE_BACKEND=postgresql у Render → Environment).
-#  Сама наявність бази нічого не вмикає — потрібен саме бекенд.
+#  Альтернатива без диска (не рекомендується): персонажі редактора в Render
+#  Managed PostgreSQL. Статуси терміналів, перемоги й адміністратор усе одно
+#  лишаться в SQLite і зникатимуть при деплої.
+#    1. прибери блок `disk:` і OSTVYTSYA_DB_PATH, постав plan: free;
+#    2. розкоментуй `databases:` і `DATABASE_URL` нижче;
+#    3. OSTVYTSYA_STORAGE_BACKEND=postgresql.
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # databases:
