@@ -65,6 +65,14 @@ const String kOpenAiRealtimeModel = 'gpt-realtime-2.1-mini';
 // (див. gemini_transport.dart::_sendGreeting).
 const String kGeminiLiveModel = 'gemini-3.1-flash-live-preview';
 
+/// Ціни Gemini 3.1 Flash Live, USD за 1 млн токенів (ai.google.dev/pricing,
+/// вересень 2026) — лише для ОЦІНКИ вартості в журналі сесії («Токени
+/// ходу …»); справжній рахунок виставляє Google. Оновлюй разом із моделлю.
+const double kGeminiAudioInputUsdPer1M = 3.0;
+const double kGeminiTextInputUsdPer1M = 0.75;
+const double kGeminiAudioOutputUsdPer1M = 12.0;
+const double kGeminiTextOutputUsdPer1M = 4.5;
+
 /// Мовний блок — вимога говорити ВИКЛЮЧНО українською, без іноземного
 /// акценту. Стосується всіх персонажів, додається до системного промпту
 /// завжди (портовано з domovyk_quest/prompt.py::LANGUAGE_RULES).

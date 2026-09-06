@@ -47,6 +47,22 @@ class GeminiTransport implements QuestTransport {
   int _turnTextChars = 0;
   int _consecutiveSilentTurns = 0;
 
+  // ── Облік токенів (usageMetadata) ─────────────────────────────────────
+  // Сервер шле usageMetadata з лічильниками ХОДУ: promptTokenCount — весь
+  // контекст, який модель прочитала на цьому ході (системна інструкція +
+  // УСЯ історія розмови + новий голос гравця), responseTokenCount — її
+  // відповідь. Google тарифікує саме так: історія перечитується (і
+  // оплачується) на кожному ході, тож вартість сесії росте квадратично з
+  // її довжиною — це головний чинник ціни (див. README, «Вартість»).
+  // Накопичуємо за сесію і раз на хід пишемо підсумок у журнал, щоб
+  // вартість реальних квестів можна було звірити з оцінкою.
+  Map? _turnUsage;
+  int _usageTurns = 0;
+  int _promptAudioTokens = 0;
+  int _promptTextTokens = 0;
+  int _responseAudioTokens = 0;
+  int _responseTextTokens = 0;
+
   // ── Стан відновлення сесії ────────────────────────────────────────────
   /// Останній handle, з яким сервер дозволяє відновити сесію.
   String? _resumeHandle;
@@ -384,6 +400,11 @@ class GeminiTransport implements QuestTransport {
       return;
     }
 
+    // Лічильники ходу можуть прийти й окремим повідомленням, і разом із
+    // turnComplete — беремо останні перед завершенням ходу.
+    final usage = msg['usageMetadata'];
+    if (usage is Map) _turnUsage = usage;
+
     final resumption = msg['sessionResumptionUpdate'];
     if (resumption is Map) {
       final handle = resumption['newHandle'];
@@ -465,7 +486,70 @@ class GeminiTransport implements QuestTransport {
     if (serverContent['turnComplete'] == true) {
       _emit(const QuestTransportEvent(QuestEventKind.turnComplete));
       _onTurnComplete();
+      _accountTurnUsage();
     }
+  }
+
+  /// Скільки токенів певної модальності (AUDIO/TEXT) у деталях лічильника;
+  /// якщо деталей немає — null, і тоді беремо загальну суму як аудіо (у
+  /// голосовій сесії це майже завжди так).
+  static int _modalityTokens(Object? details, String modality) {
+    if (details is! List) return 0;
+    var total = 0;
+    for (final d in details) {
+      if (d is Map && d['modality'] == modality) {
+        total += (d['tokenCount'] as num?)?.toInt() ?? 0;
+      }
+    }
+    return total;
+  }
+
+  void _accountTurnUsage() {
+    final usage = _turnUsage;
+    _turnUsage = null;
+    if (usage == null) return;
+    final prompt = (usage['promptTokenCount'] as num?)?.toInt() ?? 0;
+    final response = (usage['responseTokenCount'] as num?)?.toInt() ?? 0;
+    var pAudio = _modalityTokens(usage['promptTokensDetails'], 'AUDIO');
+    final pText = _modalityTokens(usage['promptTokensDetails'], 'TEXT');
+    var rAudio = _modalityTokens(usage['responseTokensDetails'], 'AUDIO');
+    final rText = _modalityTokens(usage['responseTokensDetails'], 'TEXT');
+    if (pAudio + pText == 0) pAudio = prompt;
+    if (rAudio + rText == 0) rAudio = response;
+
+    _usageTurns++;
+    _promptAudioTokens += pAudio;
+    _promptTextTokens += pText;
+    _responseAudioTokens += rAudio;
+    _responseTextTokens += rText;
+
+    final usd =
+        _promptAudioTokens * kGeminiAudioInputUsdPer1M / 1e6 +
+        _promptTextTokens * kGeminiTextInputUsdPer1M / 1e6 +
+        _responseAudioTokens * kGeminiAudioOutputUsdPer1M / 1e6 +
+        _responseTextTokens * kGeminiTextOutputUsdPer1M / 1e6;
+    _emit(
+      QuestTransportEvent(
+        QuestEventKind.info,
+        text:
+            'Токени ходу $_usageTurns: контекст ${_fmt(prompt)} '
+            '(аудіо ${_fmt(pAudio)}, текст ${_fmt(pText)}), відповідь '
+            '${_fmt(response)}. За сесію: вхід '
+            '${_fmt(_promptAudioTokens + _promptTextTokens)}, вихід '
+            '${_fmt(_responseAudioTokens + _responseTextTokens)} '
+            '≈ \$${usd.toStringAsFixed(3)}',
+      ),
+    );
+  }
+
+  static String _fmt(int n) {
+    final s = n.toString();
+    final out = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) out.write(' ');
+      out.write(s[i]);
+    }
+    return out.toString();
   }
 
   void _send(Map<String, dynamic> payload) {
