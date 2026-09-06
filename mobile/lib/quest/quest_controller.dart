@@ -254,19 +254,6 @@ class QuestController {
     ];
   }
 
-  /// Скільки разів [needle] зустрічається в [text] (без перекриття).
-  static int _countOccurrences(String text, String needle) {
-    if (needle.isEmpty) return 0;
-    var count = 0;
-    var from = 0;
-    while (true) {
-      final idx = text.indexOf(needle, from);
-      if (idx < 0) return count;
-      count++;
-      from = idx + needle.length;
-    }
-  }
-
   String _outcomeLabel(QuestOutcome outcome) {
     switch (outcome) {
       case QuestOutcome.won:
@@ -317,12 +304,14 @@ class QuestController {
     var userBuf = '';
     var modelBuf = '';
     var won = false;
-    // Скільки разів персонаж вимовив таємне слово. За інструкцією фінальна
-    // репліка містить його двічі: у самому тексті перемоги і ще раз —
-    // окремою чіткою фразою наприкінці. Один раз — просимо повторити.
-    var winMentions = 0;
-    var repeatRequested = false;
+    // Кінець квесту (перемога): персонаж ДОГОВОРЮЄ фінальну репліку до кінця
+    // (кодове слово вже прозвучало), далі kWinQuestionWindowS секунд ще
+    // слухаємо гравців. Перепитали — персонаж відповідає (за інструкцією
+    // коротко повторює, що робити далі) і після цієї відповіді квест
+    // закінчується; мовчать — кінець одразу після вікна.
     var finishing = false;
+    DateTime? questionWindowUntil;
+    var awaitingFinalReply = false;
     // Гості сказали слово завершення (Character.stopWords): даємо персонажу
     // відповісти (за інструкцією — попрощатись) і закриваємо сесію.
     var stopping = false;
@@ -385,6 +374,17 @@ class QuestController {
           lastUserVoiceAt = lastVoice;
           userSpokeSinceTurn = true;
           autoContinues = 0;
+          if (finishing && questionWindowUntil != null && !awaitingFinalReply) {
+            // Гравці перепитали після фінальної репліки — персонаж сам
+            // відповість (одна коротка репліка), і на цьому кінець.
+            awaitingFinalReply = true;
+            questionWindowUntil = null;
+            _say(
+              'system',
+              'Гравці озвались після фінальної репліки — персонаж повторює, '
+              'що робити далі, і квест закінчується.',
+            );
+          }
           if (!stopping &&
               character.stopWords.isNotEmpty &&
               matchesWakeWord(userBuf, character.stopWords, threshold: 0.8)) {
@@ -417,39 +417,32 @@ class QuestController {
           if (modelBuf.trim().isNotEmpty) {
             _say('agent', modelBuf.trim());
           }
-          if (winStemValue.isNotEmpty) {
-            winMentions += _countOccurrences(
-              normalizeText(modelBuf),
-              winStemValue,
-            );
-          }
           userBuf = '';
           modelBuf = '';
           userSpokeSinceTurn = false;
           audio.unmuteIfNoAudioYet();
           if (won && !finishing) {
-            if (winMentions >= 2 || repeatRequested) {
-              // Слово названо і повторено (або ми вже просили повторити) —
-              // даємо договорити останню репліку до кінця і одразу
-              // завершуємо: жодних додаткових пауз, далі новий квест.
-              finishing = true;
-              audio.waitDrained().then((_) => finish(QuestOutcome.won));
-            } else {
-              // Персонаж назвав слово лише раз — просимо повторити його
-              // ще однією чіткою фразою (рівно один раз).
-              repeatRequested = true;
-              _say(
-                'system',
-                'Таємне слово прозвучало один раз — просимо персонажа '
-                'повторити його чітко.',
+            // Кодове слово прозвучало — даємо договорити фінальну репліку
+            // ДО КІНЦЯ (разом із хвостом у буфері плеєра), а тоді ще
+            // слухаємо гравців: раптом перепитають.
+            finishing = true;
+            final windowS = kWinQuestionWindowS.round();
+            _say(
+              'system',
+              'Кодове слово прозвучало — персонаж договорює, далі до '
+              '$windowS с слухаємо, чи перепитають гравці.',
+            );
+            audio.waitDrained().then((_) {
+              if (completer.isCompleted || awaitingFinalReply) return;
+              questionWindowUntil = DateTime.now().add(
+                Duration(milliseconds: (kWinQuestionWindowS * 1000).round()),
               );
-              transport.sendText(
-                '[Службовий сигнал — не читай його вголос. Діти могли не '
-                'розчути. Повтори таємне слово «${character.winWord}» ще '
-                'однією короткою фразою — чітко, повільно й розбірливо — і '
-                'на цьому закінчи, більше нічого не кажи.]',
-              );
-            }
+              _say('system', 'Персонаж договорив — слухаємо гравців.');
+            });
+          } else if (finishing && awaitingFinalReply) {
+            // Персонаж відповів на перепитування — договорює, і кінець.
+            _say('system', 'Персонаж відповів — кінець квесту.');
+            audio.waitDrained().then((_) => finish(QuestOutcome.won));
           }
           if (stopping && !finishing) {
             // Персонаж відповів на слово завершення (за інструкцією —
@@ -509,9 +502,18 @@ class QuestController {
       }
       final idleS = DateTime.now().difference(lastVoice).inSeconds;
       if (won || stopping) {
+        final window = questionWindowUntil;
+        if (window != null) {
+          // Фінальна репліка договорена — чекаємо, чи перепитають гравці.
+          if (DateTime.now().isAfter(window)) {
+            _say('system', 'Гравці не перепитали — кінець квесту.');
+            finish(won ? QuestOutcome.won : QuestOutcome.ended);
+          }
+          return;
+        }
         // Запобіжник: перемога є (чи гості сказали слово завершення), а хід
-        // так і не завершився (немає turnComplete чи повтору) — не тримаємо
-        // сесію, закриваємо після короткої тиші.
+        // так і не завершився (немає turnComplete) або персонаж не відповів
+        // на перепитування — не тримаємо сесію, закриваємо після тиші.
         if (idleS > kWinSafetyTimeoutS) {
           finish(won ? QuestOutcome.won : QuestOutcome.ended);
         }
@@ -567,7 +569,11 @@ class QuestController {
     watchdog.cancel();
     await eventsSub.cancel();
     await audioSub.cancel();
-    await audio.stop();
+    // Природний кінець (перемога, слово завершення, тайм-аут) — плеєр
+    // дограє все, що вже отримав; зупинка користувачем чи помилка — негайно.
+    await audio.stop(
+      drain: outcome == QuestOutcome.won || outcome == QuestOutcome.ended,
+    );
     try {
       await transport.close();
     } catch (_) {}

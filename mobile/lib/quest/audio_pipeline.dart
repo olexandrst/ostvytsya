@@ -442,6 +442,11 @@ class AudioPipeline {
     while (_queuedUntil > _now && _now < deadline) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
+    // Горизонт _queuedUntil рахується за тривалістю ПЕРЕДАНИХ байтів; у
+    // буфері AudioTrack і на шляху до динаміка (Bluetooth) ще лишається
+    // частка секунди — даємо їй дозвучати, перш ніж вважати репліку
+    // закінченою (остаточно про це дбає нативний stop(drain: true)).
+    await Future<void>.delayed(const Duration(milliseconds: 600));
   }
 
   /// Негайно зняти заглушення (напр. після ручної зупинки відтворення).
@@ -452,7 +457,10 @@ class AudioPipeline {
     unawaited(_queueMicOp(_startRecorderStream));
   }
 
-  Future<void> stop() async {
+  /// [drain] = true — природний кінець квесту: плеєр дограє все, що вже
+  /// отримав (до кількох секунд), щоб фінальна репліка не обірвалась.
+  /// false — негайна зупинка (кнопка «Зупинити», помилка).
+  Future<void> stop({bool drain = false}) async {
     _unmuteTimer?.cancel();
     _unmuteTimer = null;
     _playerReady = false;
@@ -461,7 +469,7 @@ class AudioPipeline {
     await _deviceChangeSub?.cancel();
     _deviceChangeSub = null;
     await _queueMicOp(_stopRecorderStream);
-    await _player.stop();
+    await _player.stop(drain: drain);
     await _deviceService.stopSco();
     _voicePlayback = false;
     _muted = false;

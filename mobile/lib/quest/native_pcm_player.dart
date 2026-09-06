@@ -36,9 +36,12 @@ class NativePcmPlayer {
     }
   }
 
-  Future<void> stop() async {
+  /// [drain] = true — дати нативному плеєру ДОГРАТИ все передане (кінець
+  /// квесту: фінальна репліка не має обриватись); false — зупинити негайно
+  /// (кнопка «Зупинити», аварія).
+  Future<void> stop({bool drain = false}) async {
     try {
-      await _channel.invokeMethod('pcmPlayerStop');
+      await _channel.invokeMethod('pcmPlayerStop', {'drain': drain});
     } on PlatformException {
       // Плеєр міг і не стартувати — нема що зупиняти.
     }

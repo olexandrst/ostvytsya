@@ -104,37 +104,53 @@ class PcmAudioPlayer {
         }
     }
 
+    /** Скільки кадрів (семплів моно) уже передано в AudioTrack — щоб при
+     *  завершенні дочекатися, поки він їх справді програє. */
+    private var framesWritten = 0L
+
     fun write(bytes: ByteArray) {
         val h = handler ?: return
         h.post {
             val track = audioTrack ?: return@post
             try {
-                track.write(bytes, 0, bytes.size)
+                val written = track.write(bytes, 0, bytes.size)
+                if (written > 0) framesWritten += written / 2 // PCM16 моно
             } catch (err: Throwable) {
                 Log.e(TAG, "Помилка запису в AudioTrack", err)
             }
         }
     }
 
-    fun stop() {
+    /**
+     * Зупинити плеєр.
+     *
+     * [drain] = false (кнопка «Зупинити», аварійне завершення): скидаємо ВСІ
+     * ще не виконані write() — інакше quitSafely() чекає, поки серіалізована
+     * черга дограє геть усю накопичену репліку (могло бути кілька секунд), і
+     * кнопка реагує з відчутною затримкою; AudioTrack звільняється одразу.
+     *
+     * [drain] = true (природний кінець квесту): навпаки, даємо ДОГРАТИ все,
+     * що вже передано, — черга write() виконується до кінця, а AudioTrack
+     * звільняється лише коли його головка відтворення дійшла до останнього
+     * записаного кадру (з обмеженням [DRAIN_TIMEOUT_MS]). Без цього кінець
+     * фінальної репліки персонажа обрізався: Dart вважав, що все програно
+     * (за тривалістю переданих байтів), а в буфері AudioTrack і на
+     * Bluetooth-шляху ще лишалась частка секунди звуку.
+     */
+    fun stop(drain: Boolean = false) {
         val h = handler ?: return
         val t = thread
-        // Скидаємо ВСІ ще не виконані write() — інакше quitSafely() чекає,
-        // поки серіалізована черга дограє геть усю накопичену репліку
-        // персонажа (могло бути кілька секунд), і кнопка "Зупинити" реагує
-        // з відчутною затримкою. Лишається щонайбільше один write(), що вже
-        // виконується прямо зараз (і сам скоро розблокується, бо звільнення
-        // буфера AudioTrack — питання мілісекунд, а не секунд).
-        h.removeCallbacksAndMessages(null)
-        h.post { releaseTrack() }
+        if (!drain) h.removeCallbacksAndMessages(null)
+        h.post { releaseTrack(drain) }
         t?.quitSafely()
         thread = null
         handler = null
     }
 
-    private fun releaseTrack() {
+    private fun releaseTrack(drain: Boolean) {
         try {
             audioTrack?.let {
+                if (drain) waitPlayedOut(it)
                 it.stop()
                 it.release()
             }
@@ -142,10 +158,38 @@ class PcmAudioPlayer {
             Log.e(TAG, "Помилка зупинки AudioTrack", err)
         } finally {
             audioTrack = null
+            framesWritten = 0L
+        }
+    }
+
+    /** Дочекатися, поки AudioTrack програє все записане (або тайм-аут). */
+    private fun waitPlayedOut(track: AudioTrack) {
+        val target = framesWritten
+        if (target <= 0L) return
+        val deadline = System.currentTimeMillis() + DRAIN_TIMEOUT_MS
+        try {
+            // playbackHeadPosition — 32-бітний лічильник кадрів; для наших
+            // реплік (хвилини, не години) переповнення не загрожує.
+            while (System.currentTimeMillis() < deadline) {
+                val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                if (head >= target) break
+                Thread.sleep(20)
+            }
+            // Запас на шлях від AudioTrack до динаміка/Bluetooth: головка
+            // рахує кадри, віддані міксеру, а не вже почуті.
+            Thread.sleep(TAIL_LATENCY_MS)
+        } catch (_: Throwable) {
+            // Не змогли дочекатись — зупиняємо як є.
         }
     }
 
     companion object {
         private const val TAG = "PcmAudioPlayer"
+
+        /** Максимум чекати, поки AudioTrack дограє записане, при stop(drain). */
+        private const val DRAIN_TIMEOUT_MS = 4_000L
+
+        /** Запас після останнього кадру — затримка виводу (Bluetooth до ~300 мс). */
+        private const val TAIL_LATENCY_MS = 400L
     }
 }

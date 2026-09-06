@@ -118,7 +118,11 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "pcmPlayerStop" -> {
-                        pcmPlayer.stop()
+                        // drain — дограти все передане (кінець квесту), інакше
+                        // негайно (кнопка «Зупинити»). Дочікування йде на
+                        // потоці плеєра, тож відповідь Dart — одразу.
+                        val drain = call.argument<Boolean>("drain") ?: false
+                        pcmPlayer.stop(drain)
                         result.success(null)
                     }
                     "pcmPlayerSetOutputDevice" -> {
