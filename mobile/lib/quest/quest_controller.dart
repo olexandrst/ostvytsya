@@ -254,6 +254,18 @@ class QuestController {
     ];
   }
 
+  /// Ремарка-опис дії, яку модель вимовила як текст: «(сміється)»,
+  /// «*хитро підморгує*» або без дужок — «короткий хитрий смішок». Аудіо на
+  /// цей момент уже прозвучало, тож це лише для журналу сесії: щоб було
+  /// видно, коли і що саме вона озвучила, і можна було правити промпт.
+  static final _stageDirection = RegExp(
+    r"[\(\[\*][^\)\]\*\n]{2,80}[\)\]\*]"
+    r"|(?<![а-яіїєґ'’])(смішок|смішком|сміється|засміялась|засміялася|"
+    r"хихикає|хихоче|регоче|зітхає|підморгує|притишує голос)(?![а-яіїєґ'’])",
+    caseSensitive: false,
+    unicode: true,
+  );
+
   String _outcomeLabel(QuestOutcome outcome) {
     switch (outcome) {
       case QuestOutcome.won:
@@ -416,6 +428,15 @@ class QuestController {
           }
           if (modelBuf.trim().isNotEmpty) {
             _say('agent', modelBuf.trim());
+            final direction = _stageDirection.firstMatch(modelBuf);
+            if (direction != null) {
+              _say(
+                'system',
+                '⚠️ Персонаж озвучив ремарку як текст: '
+                '«${direction.group(0)}» — заборонено промптом, це вада '
+                'моделі; рядок для розбору.',
+              );
+            }
           }
           userBuf = '';
           modelBuf = '';
