@@ -117,6 +117,10 @@ class MainActivity : FlutterActivity() {
                         if (bytes != null) pcmPlayer.write(bytes)
                         result.success(null)
                     }
+                    "pcmPlayerFlush" -> {
+                        pcmPlayer.flush()
+                        result.success(null)
+                    }
                     "pcmPlayerStop" -> {
                         // drain — дограти все передане (кінець квесту), інакше
                         // негайно (кнопка «Зупинити»). Дочікування йде на

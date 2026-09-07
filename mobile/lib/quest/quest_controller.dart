@@ -254,18 +254,6 @@ class QuestController {
     ];
   }
 
-  /// Ремарка-опис дії, яку модель вимовила як текст: «(сміється)»,
-  /// «*хитро підморгує*» або без дужок — «короткий хитрий смішок». Аудіо на
-  /// цей момент уже прозвучало, тож це лише для журналу сесії: щоб було
-  /// видно, коли і що саме вона озвучила, і можна було правити промпт.
-  static final _stageDirection = RegExp(
-    r"[\(\[\*][^\)\]\*\n]{2,80}[\)\]\*]"
-    r"|(?<![а-яіїєґ'’])(смішок|смішком|сміється|засміялась|засміялася|"
-    r"хихикає|хихоче|регоче|зітхає|підморгує|притишує голос)(?![а-яіїєґ'’])",
-    caseSensitive: false,
-    unicode: true,
-  );
-
   String _outcomeLabel(QuestOutcome outcome) {
     switch (outcome) {
       case QuestOutcome.won:
@@ -356,6 +344,14 @@ class QuestController {
 
     var loggedFirstAudioChunk = false;
 
+    // Ремарки-описи дій у мовленні персонажа («Короткий хитрий смішок.»):
+    // щойно така з'являється в транскрипті ходу (він приходить трохи раніше
+    // за відтворення — шматки аудіо чекають у черзі плеєра), решту аудіо
+    // цього ходу відкидаємо і просимо повторити репліку без описів. Не
+    // частіше, ніж раз на kStageDirectionRedoCooldownS, щоб не зациклитись.
+    var discardTurnAudio = false;
+    DateTime? lastRedoAt;
+
     final eventsSub = transport.events.listen((evt) {
       switch (evt.kind) {
         case QuestEventKind.ready:
@@ -415,6 +411,39 @@ class QuestController {
               normalizeText(modelBuf).contains(winStemValue)) {
             won = true;
           }
+          if (!discardTurnAudio && !finishing) {
+            final direction = findStageDirection(modelBuf);
+            if (direction != null) {
+              final now = DateTime.now();
+              final last = lastRedoAt;
+              final cooled =
+                  last == null ||
+                  now.difference(last).inSeconds >=
+                      kStageDirectionRedoCooldownS;
+              if (cooled) {
+                discardTurnAudio = true;
+                lastRedoAt = now;
+                audio.dropQueuedAgentAudio();
+                _say(
+                  'system',
+                  '⚠️ Персонаж вимовляє ремарку як текст: «$direction» — '
+                  'обриваю репліку і прошу повторити без описів.',
+                );
+                transport.sendText(
+                  '[Службовий сигнал — не читай його вголос. Ти щойно '
+                  'вимовив(ла) опис дії «$direction» як текст. Повтори свою '
+                  'останню репліку від початку — лише слова персонажа, без '
+                  'жодних описів сміху, дій, звуків чи інтонації.]',
+                );
+              } else {
+                _say(
+                  'system',
+                  '⚠️ Персонаж вимовляє ремарку як текст: «$direction» '
+                  '(повтор просили нещодавно — лишаю як є).',
+                );
+              }
+            }
+          }
           break;
         case QuestEventKind.turnComplete:
           if (!loggedFirstAudioChunk) {
@@ -428,16 +457,8 @@ class QuestController {
           }
           if (modelBuf.trim().isNotEmpty) {
             _say('agent', modelBuf.trim());
-            final direction = _stageDirection.firstMatch(modelBuf);
-            if (direction != null) {
-              _say(
-                'system',
-                '⚠️ Персонаж озвучив ремарку як текст: '
-                '«${direction.group(0)}» — заборонено промптом, це вада '
-                'моделі; рядок для розбору.',
-              );
-            }
           }
+          discardTurnAudio = false;
           userBuf = '';
           modelBuf = '';
           userSpokeSinceTurn = false;
@@ -473,6 +494,9 @@ class QuestController {
           }
           break;
         case QuestEventKind.interrupted:
+          // Сервер обірвав генерацію (напр. після нашого прохання повторити
+          // репліку без ремарок) — далі йде нова відповідь, її озвучуємо.
+          discardTurnAudio = false;
           break;
         case QuestEventKind.info:
           _say('system', evt.text ?? '');
@@ -507,6 +531,7 @@ class QuestController {
           'Отримано перший шматок голосу персонажа (${chunk.length} байт).',
         );
       }
+      if (discardTurnAudio) return; // решту цієї репліки не озвучуємо
       unawaited(audio.playAgentChunk(chunk, transport.outputSampleRate));
       unawaited(_recorder.writeAgent(chunk, transport.outputSampleRate));
     });

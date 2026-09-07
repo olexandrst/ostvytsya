@@ -16,3 +16,55 @@ String winStem(String winWord) {
       ? normalized.substring(0, normalized.length - 1)
       : normalized;
 }
+
+// ── Ремарки-описи дій у мовленні персонажа ────────────────────────────────
+// Голосова модель інколи вимовляє як текст опис своєї дії чи звуку замість
+// репліки: «(сміється)», «*хитро підморгує*» або без дужок — «Короткий
+// хитрий смішок.», «Дзвінко сміється.». Шукаємо лише «наративні» форми (у
+// дужках/зірочках чи окреме речення з самих означень і слова про звук/дію),
+// щоб не чіпати живу мову: «…з веселим сміхом побажаю…» — це репліка.
+
+final RegExp _bracketedDirection = RegExp(
+  r'[\(\[\*][^\)\]\*\n]{2,80}[\)\]\*]',
+  unicode: true,
+);
+final RegExp _sentenceEnd = RegExp(r'[.!?…\n]+', unicode: true);
+final RegExp _narrationNoun = RegExp(
+  r'^(?:(?:коротк|тих|дзвінк|пустотлив|хитр|легк|весел|грайлив|лукав|радісн|'
+  r'дівоч|дитяч|голосн|стриман|легеньк|глибок|важк|сумн|ніжн|змовницьк)'
+  r'\p{L}*\s*|ледь\s+чутн\p{L}*\s*|з\s+|зі\s+|та\s+|і\s+|й\s+|,\s*)*'
+  r'(?:смішок|сміх|сміху|сміхом|хихикання|хихотіння|регіт|реготання|'
+  r'зітхання|шепіт|пауза|усмішка|посмішка)\s*$',
+  unicode: true,
+  caseSensitive: false,
+);
+final RegExp _narrationVerb = RegExp(
+  r'^(?:(?:дзвінко|пустотливо|тихо|весело|хитро|лукаво|грайливо|коротко|'
+  r'легенько|голосно|радісно|змовницьки|сумно|ніжно|ледь\s+чутно|'
+  r'з\s+усмішкою|з\s+посмішкою)\s*|,\s*)*'
+  r'(?:сміється|засміялась|засміялася|розсміялась|розсміялася|хихикає|'
+  r'захихикала|хихоче|регоче|зареготала|зітхає|зітхнула|шепоче|прошепотіла|'
+  r'підморгує|усміхається|посміхається|сміюся|сміюсь|хихикаю|хихочу)\s*$',
+  unicode: true,
+  caseSensitive: false,
+);
+
+/// Знайти в [text] (транскрипт ходу персонажа, можливо ще не повний)
+/// ремарку-опис дії, вимовлену як текст. Повертає знайдений шматок або
+/// null. Незакінчене останнє речення не перевіряється — щоб не спрацювати
+/// на половині слова, яке ще дописується.
+String? findStageDirection(String text) {
+  final bracketed = _bracketedDirection.firstMatch(text);
+  if (bracketed != null) return bracketed.group(0);
+  final complete = _sentenceEnd.hasMatch(text.substring(
+    text.isEmpty ? 0 : text.length - 1,
+  ));
+  final parts = text.split(_sentenceEnd);
+  final upto = complete ? parts.length : parts.length - 1;
+  for (var i = 0; i < upto; i++) {
+    final s = parts[i].trim();
+    if (s.isEmpty || s.length > 60) continue;
+    if (_narrationNoun.hasMatch(s) || _narrationVerb.hasMatch(s)) return s;
+  }
+  return null;
+}

@@ -122,6 +122,30 @@ class PcmAudioPlayer {
     }
 
     /**
+     * Скинути все ще не програне — і чергу write(), і буфер AudioTrack, — не
+     * зупиняючи плеєр: далі можна писати нові шматки. Використовується,
+     * коли решту репліки персонажа не треба озвучувати (він почав читати
+     * ремарку-опис дії як текст, і застосунок просить повторити).
+     */
+    fun flush() {
+        val h = handler ?: return
+        h.removeCallbacksAndMessages(null)
+        h.post {
+            val track = audioTrack ?: return@post
+            try {
+                track.pause()
+                track.flush()
+                track.play()
+                // Далі рахуємо «дограно» від поточної головки, а не від усього,
+                // що колись записали (частину щойно викинули).
+                framesWritten = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+            } catch (err: Throwable) {
+                Log.e(TAG, "Помилка скидання буфера AudioTrack", err)
+            }
+        }
+    }
+
+    /**
      * Зупинити плеєр.
      *
      * [drain] = false (кнопка «Зупинити», аварійне завершення): скидаємо ВСІ
