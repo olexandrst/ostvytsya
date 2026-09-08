@@ -2,17 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ostvytsya_quest/quest/transcript_utils.dart';
 
 void main() {
-  test('ремарка в дужках', () {
+  test('дужки й зірочки в живій мові — не ремарка', () {
     expect(
-      findStageDirection('Отакої… (короткий хитрий смішок) вже й про князя!'),
-      '(короткий хитрий смішок)',
+      findStageDirection('Отакої… (вже й про князя знаєте?) Значить від Морени!'),
+      null,
     );
-  });
-  test('ремарка в зірочках', () {
-    expect(
-      findStageDirection('*хитро підморгує* Ну ж бо!'),
-      '*хитро підморгує*',
-    );
+    expect(findStageDirection('*Загадка перша.* Місце, де воскресають Боги.'), null);
   });
   test('окреме речення з означень і слова про сміх', () {
     expect(
