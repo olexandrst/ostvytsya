@@ -106,6 +106,10 @@ class OpenAiTransport implements QuestTransport {
 
   void _sendGreeting() => sendText(kGreetingTrigger);
 
+  /// У OpenAI Realtime механізму повторного озвучення немає — нічого не робимо.
+  @override
+  void setRecoveryEnabled(bool enabled) {}
+
   @override
   void sendText(String text) {
     if (!_sessionReady) return;
