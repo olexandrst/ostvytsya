@@ -362,6 +362,7 @@ class QuestController {
     // відрізнити справжнє перепитування гравців від відлуння його ж голосу
     // (динамік → мікрофон, поки хвіст репліки ще звучить на колонці).
     var lastAgentText = '';
+    var loggedEchoReplyDrop = false;
 
     final eventsSub = transport.events.listen((evt) {
       switch (evt.kind) {
@@ -460,6 +461,9 @@ class QuestController {
             // ДО КІНЦЯ (разом із хвостом у буфері плеєра), а тоді ще
             // слухаємо гравців: раптом перепитають.
             finishing = true;
+            // Далі транспорт не має сам просити «озвуч репліку ще раз»:
+            // повторне озвучення фіналу = двічі сказане кодове слово.
+            transport.setRecoveryEnabled(false);
             final windowS = kWinQuestionWindowS.round();
             _say(
               'system',
@@ -520,6 +524,21 @@ class QuestController {
           'Отримано перший шматок голосу персонажа (${chunk.length} байт).',
         );
       }
+      if (finishing && questionWindowUntil != null && !awaitingFinalReply) {
+        // Фінальну репліку договорено, гравці НЕ перепитували (або це було
+        // відлуння його ж голосу з колонки), а модель усе одно щось каже —
+        // це відповідь на відлуння чи шум. Не озвучуємо: інакше «Начувайтеся»
+        // лунає вдруге.
+        if (!loggedEchoReplyDrop) {
+          loggedEchoReplyDrop = true;
+          _say(
+            'system',
+            'Персонаж озвався після фіналу без перепитування гравців — '
+            'не відтворюємо (відповідь на відлуння чи шум).',
+          );
+        }
+        return;
+      }
       unawaited(audio.playAgentChunk(chunk, transport.outputSampleRate));
       unawaited(_recorder.writeAgent(chunk, transport.outputSampleRate));
     });
@@ -579,8 +598,8 @@ class QuestController {
             'своєму образі ОДНІЄЮ короткою реплікою: якщо ставив питання чи '
             'загадку — повтори ЛИШЕ саме питання (одним-двома реченнями, '
             'без вступу й без того, що вже казав) або спитай, чи потрібна '
-            'підказка; якщо вів розповідь — веди наступну частину. І знову '
-            'слухай.]',
+            'підказка; якщо вів розповідь — веди наступну частину. Не '
+            'мовчи — обов\'язково скажи це вголос. І знову слухай.]',
           );
         }
       }

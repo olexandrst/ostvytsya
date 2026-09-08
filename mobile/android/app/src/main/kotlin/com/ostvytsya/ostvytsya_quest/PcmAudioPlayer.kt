@@ -108,16 +108,37 @@ class PcmAudioPlayer {
      *  завершенні дочекатися, поки він їх справді програє. */
     private var framesWritten = 0L
 
+    /** Скільки кадрів поставлено в чергу write() (включно з іще не
+     *  записаними) — для [playedOut] з іншого потоку. */
+    @Volatile private var framesQueued = 0L
+
     fun write(bytes: ByteArray) {
         val h = handler ?: return
+        framesQueued += bytes.size / 2 // PCM16 моно
         h.post {
             val track = audioTrack ?: return@post
             try {
                 val written = track.write(bytes, 0, bytes.size)
-                if (written > 0) framesWritten += written / 2 // PCM16 моно
+                if (written > 0) framesWritten += written / 2
             } catch (err: Throwable) {
                 Log.e(TAG, "Помилка запису в AudioTrack", err)
             }
+        }
+    }
+
+    /**
+     * Чи AudioTrack уже програв усе, що йому передали (головка відтворення
+     * дійшла до останнього поставленого в чергу кадру). Dart рахує кінець
+     * репліки за тривалістю переданих байтів — а тут справжній стан плеєра,
+     * тож мікрофон можна вмикати, не ловлячи хвіст репліки з колонки.
+     */
+    fun playedOut(): Boolean {
+        val track = audioTrack ?: return true
+        return try {
+            val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+            head >= framesQueued
+        } catch (_: Throwable) {
+            true
         }
     }
 
@@ -138,7 +159,9 @@ class PcmAudioPlayer {
                 track.play()
                 // Далі рахуємо «дограно» від поточної головки, а не від усього,
                 // що колись записали (частину щойно викинули).
-                framesWritten = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                val head = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                framesWritten = head
+                framesQueued = head
             } catch (err: Throwable) {
                 Log.e(TAG, "Помилка скидання буфера AudioTrack", err)
             }
@@ -183,6 +206,7 @@ class PcmAudioPlayer {
         } finally {
             audioTrack = null
             framesWritten = 0L
+            framesQueued = 0L
         }
     }
 

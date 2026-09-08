@@ -117,6 +117,9 @@ class MainActivity : FlutterActivity() {
                         if (bytes != null) pcmPlayer.write(bytes)
                         result.success(null)
                     }
+                    "pcmPlayerPlayedOut" -> {
+                        result.success(pcmPlayer.playedOut())
+                    }
                     "pcmPlayerFlush" -> {
                         pcmPlayer.flush()
                         result.success(null)

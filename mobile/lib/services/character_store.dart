@@ -121,10 +121,19 @@ class CharacterStore {
         // Пошкоджений файл персонажа — пропускаємо, а не валимо весь список.
       }
     }
-    result.sort(
-      (a, b) =>
-          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
-    );
+    // Порядок на головному екрані: спершу три персонажі парку в потрібній
+    // черзі (Повітруля, Дерево, Домовичок), далі решта за назвою.
+    const pinned = ['povitrulya', 'derevo', 'domovychok'];
+    int rank(Character c) {
+      final i = pinned.indexOf(c.id);
+      return i < 0 ? pinned.length : i;
+    }
+
+    result.sort((a, b) {
+      final byRank = rank(a).compareTo(rank(b));
+      if (byRank != 0) return byRank;
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+    });
     return result;
   }
 

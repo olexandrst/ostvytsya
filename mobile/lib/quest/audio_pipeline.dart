@@ -30,6 +30,12 @@ class AudioPipeline {
   StreamSubscription<void>? _deviceChangeSub;
   bool _opened = false;
   bool _muted = false;
+
+  /// Покоління запиту на розблокування мікрофона: кожен новий шматок голосу
+  /// персонажа переносить момент розблокування, і застаріле очікування
+  /// (яке ще чекає, поки плеєр дограє) не має відкрити мікрофон посеред
+  /// нової репліки.
+  int _unmuteGen = 0;
   bool _recorderRunning = false;
   double _queuedUntil = 0; // монотонний час (секунди) спорожнення черги
   Timer? _unmuteTimer;
@@ -407,14 +413,34 @@ class AudioPipeline {
     }
 
     _unmuteTimer?.cancel();
-    // +800 мс: буфер AudioTrack і шлях до колонки (Bluetooth — до ~300 мс)
-    // ще дограють хвіст, коли за розрахунком репліка вже скінчилась; якщо
-    // відкрити мікрофон раніше, він ловить відлуння персонажа з колонки.
-    final ms = (((_queuedUntil - now) * 1000).round() + 800)
+    final gen = ++_unmuteGen;
+    // Розрахунковий кінець репліки за тривалістю переданих байтів — лише
+    // орієнтир: далі ще питаємо нативний плеєр, чи він справді все програв
+    // (буфер AudioTrack і шлях до колонки додають до секунди), і тільки тоді
+    // вмикаємо мікрофон — інакше він ловить хвіст репліки з колонки, і
+    // персонаж відповідає сам собі.
+    final ms = (((_queuedUntil - now) * 1000).round() + 300)
         .clamp(0, 60000)
         .toInt();
-    final delay = Duration(milliseconds: ms);
-    _unmuteTimer = Timer(delay, () {
+    _unmuteTimer = Timer(Duration(milliseconds: ms), () {
+      unawaited(_unmuteWhenPlayedOut(gen, 0));
+    });
+  }
+
+  /// Розблокувати мікрофон, щойно нативний плеєр дограв усе (опитування
+  /// раз на 150 мс, не довше ~3 с) плюс запас на шлях звуку до колонки.
+  Future<void> _unmuteWhenPlayedOut(int gen, int attempt) async {
+    if (gen != _unmuteGen) return; // прийшов новий шматок — це очікування зайве
+    if (attempt < 20 && !await _player.playedOut()) {
+      if (gen != _unmuteGen) return;
+      _unmuteTimer = Timer(const Duration(milliseconds: 150), () {
+        unawaited(_unmuteWhenPlayedOut(gen, attempt + 1));
+      });
+      return;
+    }
+    if (gen != _unmuteGen) return;
+    _unmuteTimer = Timer(const Duration(milliseconds: 500), () {
+      if (gen != _unmuteGen) return;
       _muted = false;
       unawaited(_queueMicOp(_startRecorderStream));
     });
@@ -445,16 +471,19 @@ class AudioPipeline {
     while (_queuedUntil > _now && _now < deadline) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
-    // Горизонт _queuedUntil рахується за тривалістю ПЕРЕДАНИХ байтів; у
-    // буфері AudioTrack і на шляху до динаміка (Bluetooth) ще лишається
-    // частка секунди — даємо їй дозвучати, перш ніж вважати репліку
-    // закінченою (остаточно про це дбає нативний stop(drain: true)).
-    await Future<void>.delayed(const Duration(milliseconds: 600));
+    // Горизонт _queuedUntil рахується за тривалістю ПЕРЕДАНИХ байтів; далі
+    // питаємо нативний плеєр, чи він справді все програв (буфер AudioTrack),
+    // і даємо ще запас на шлях до колонки (Bluetooth).
+    while (_now < deadline && !await _player.playedOut()) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 500));
   }
 
   /// Негайно зняти заглушення (напр. після ручної зупинки відтворення).
   void unmuteNow() {
     _unmuteTimer?.cancel();
+    _unmuteGen++; // застаріле очікування «плеєр дограв» більше не діє
     _muted = false;
     _queuedUntil = 0;
     unawaited(_queueMicOp(_startRecorderStream));
@@ -466,6 +495,7 @@ class AudioPipeline {
   Future<void> stop({bool drain = false}) async {
     _unmuteTimer?.cancel();
     _unmuteTimer = null;
+    _unmuteGen++;
     _playerReady = false;
     _pendingChunks.clear();
     _onMic = null;

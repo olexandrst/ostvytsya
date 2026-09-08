@@ -36,6 +36,18 @@ class NativePcmPlayer {
     }
   }
 
+  /// Чи нативний плеєр уже програв усе, що йому передали. При помилці чи
+  /// без плеєра — true (не блокувати мікрофон назавжди).
+  Future<bool> playedOut() async {
+    try {
+      return await _channel.invokeMethod<bool>('pcmPlayerPlayedOut') ?? true;
+    } on PlatformException {
+      return true;
+    } on MissingPluginException {
+      return true;
+    }
+  }
+
   /// Викинути все ще не програне (чергу шматків і буфер AudioTrack), не
   /// зупиняючи плеєр — далі можна писати нові шматки.
   Future<void> flush() async {

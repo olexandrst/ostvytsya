@@ -46,6 +46,12 @@ class GeminiTransport implements QuestTransport {
   int _turnAudioBytes = 0;
   int _turnTextChars = 0;
   int _consecutiveSilentTurns = 0;
+  bool _recoveryEnabled = true;
+
+  @override
+  void setRecoveryEnabled(bool enabled) {
+    _recoveryEnabled = enabled;
+  }
 
   // ── Облік токенів (usageMetadata) ─────────────────────────────────────
   // Сервер шле usageMetadata з лічильниками ХОДУ: promptTokenCount — весь
@@ -368,8 +374,20 @@ class GeminiTransport implements QuestTransport {
     if (_turnAudioBytes >= requiredBytes) {
       _consecutiveSilentTurns = 0;
     } else if (kGeminiLiveModel.contains('3.1') &&
+        _recoveryEnabled &&
+        _turnTextChars > 0 &&
         _consecutiveSilentTurns < _maxRecoveryAttempts) {
       _consecutiveSilentTurns++;
+      _emit(
+        QuestTransportEvent(
+          QuestEventKind.info,
+          text:
+              'Хід майже без озвучення: $_turnAudioBytes байт аудіо на '
+              '$_turnTextChars символів тексту — прошу модель озвучити '
+              'репліку ще раз (спроба $_consecutiveSilentTurns з '
+              '$_maxRecoveryAttempts).',
+        ),
+      );
       _sendSilentAudioPrimer();
       _send({
         'realtime_input': {
