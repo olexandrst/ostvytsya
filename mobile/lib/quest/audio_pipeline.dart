@@ -465,7 +465,9 @@ class AudioPipeline {
   /// Зачекати, поки черга відтворення голосу персонажа спорожніє — щоб не
   /// обірвати останню репліку (слово-повтор), коли перемога вже зафіксована.
   Future<void> waitDrained({
-    Duration maxWait = const Duration(seconds: 20),
+    // Фінальна репліка з подвійним повтором напрямку може тривати до хвилини
+    // — стеля має бути з запасом, інакше вона обривається на півслові.
+    Duration maxWait = const Duration(seconds: 90),
   }) async {
     final deadline = _now + maxWait.inMilliseconds / 1000;
     while (_queuedUntil > _now && _now < deadline) {

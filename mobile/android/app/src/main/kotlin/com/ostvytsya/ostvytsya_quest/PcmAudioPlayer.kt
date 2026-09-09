@@ -184,11 +184,20 @@ class PcmAudioPlayer {
      * (за тривалістю переданих байтів), а в буфері AudioTrack і на
      * Bluetooth-шляху ще лишалась частка секунди звуку.
      */
-    fun stop(drain: Boolean = false) {
-        val h = handler ?: return
+    /**
+     * [onDone] викликається (на потоці плеєра), коли AudioTrack справді
+     * звільнено — при drain це вже ПІСЛЯ того, як усе дограно. Без цього
+     * Dart уважав зупинку завершеною одразу й запускав прослуховування
+     * кодового слова, поки персонаж іще договорював: Vosk ловив його ж слова.
+     */
+    fun stop(drain: Boolean = false, onDone: (() -> Unit)? = null) {
+        val h = handler ?: run { onDone?.invoke(); return }
         val t = thread
         if (!drain) h.removeCallbacksAndMessages(null)
-        h.post { releaseTrack(drain) }
+        h.post {
+            releaseTrack(drain)
+            onDone?.invoke()
+        }
         t?.quitSafely()
         thread = null
         handler = null

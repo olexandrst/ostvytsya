@@ -129,8 +129,11 @@ class MainActivity : FlutterActivity() {
                         // негайно (кнопка «Зупинити»). Дочікування йде на
                         // потоці плеєра, тож відповідь Dart — одразу.
                         val drain = call.argument<Boolean>("drain") ?: false
-                        pcmPlayer.stop(drain)
-                        result.success(null)
+                        // Відповідаємо Dart лише коли плеєр справді зупинено
+                        // (при drain — дограно до кінця); result — на головному
+                        // потоці, як вимагає Flutter.
+                        val main = android.os.Handler(android.os.Looper.getMainLooper())
+                        pcmPlayer.stop(drain) { main.post { result.success(null) } }
                     }
                     "pcmPlayerSetOutputDevice" -> {
                         val deviceId = call.argument<Int>("deviceId")

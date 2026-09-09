@@ -554,6 +554,7 @@ class QuestController {
         return;
       }
       final idleS = DateTime.now().difference(lastVoice).inSeconds;
+      if (audio.isSpeaking) agentFinishedAt = DateTime.now();
       if (won || stopping) {
         final window = questionWindowUntil;
         if (window != null) {
@@ -564,17 +565,22 @@ class QuestController {
           }
           return;
         }
+        // Поки персонаж ще говорить — нічого не обриваємо. Фінальна репліка
+        // з подвійним повтором напрямку триває довше, ніж приходять її
+        // шматки (вони йдуть швидше за реальний час), тож тиша «від
+        // останнього шматка» тут не показник: рахуємо від КІНЦЯ відтворення.
+        if (audio.isSpeaking) return;
+        final quietS = DateTime.now().difference(agentFinishedAt).inSeconds;
         // Запобіжник: перемога є (чи гості сказали слово завершення), а хід
         // так і не завершився (немає turnComplete) або персонаж не відповів
         // на перепитування — не тримаємо сесію, закриваємо після тиші.
-        if (idleS > kWinSafetyTimeoutS) {
+        if (quietS > kWinSafetyTimeoutS && idleS > kWinSafetyTimeoutS) {
           finish(won ? QuestOutcome.won : QuestOutcome.ended);
         }
         return;
       }
       // Час очікування відповіді: персонаж договорив, люди мовчать довше за
       // answerWaitS — просимо його продовжити самому.
-      if (audio.isSpeaking) agentFinishedAt = DateTime.now();
       final waitS = character.answerWaitS;
       if (waitS > 0 &&
           loggedFirstAudioChunk &&
