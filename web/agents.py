@@ -237,3 +237,72 @@ class AgentRegistry:
 
 
 registry = AgentRegistry()
+
+
+# ── Віддалений перезапуск квесту ─────────────────────────────────────────────
+# Панель ставить терміналу позначку «перезапустити квест» з часом; телефон
+# раз на ~20 с питає /api/agents/{id}/commands і виконує команду лише якщо
+# вона свіжа (не старша за RESTART_TTL_S) і новіша за останню виконану —
+# щоб холодний старт телефона чи пропущений ack не крутили квест по колу.
+# Жодних підписів чи перевірок навмисно немає (як і в статусах). Позначка
+# живе в таблиці settings (ключ restart:<id>) — переживає перезапуск сервера.
+
+RESTART_TTL_S = 10 * 60
+
+
+def _restart_key(agent_id: str) -> str:
+    return f"restart:{agent_id}"
+
+
+def server_now() -> float:
+    return time.time()
+
+
+def request_restart(agent_id: str) -> Optional[float]:
+    """Поставити команду перезапуску. Повертає її час або None для кривого id."""
+    cleaned = _clean_str(agent_id, limit=64)
+    if not cleaned:
+        return None
+    ts = time.time()
+    try:
+        db.set_setting(_restart_key(cleaned), repr(ts))
+    except Exception:  # noqa: BLE001 — база не має валити панель
+        log.exception("Не вдалося зберегти команду перезапуску")
+        return None
+    return ts
+
+
+def pending_restart(agent_id: str) -> Optional[float]:
+    """Час невиконаної команди перезапуску для термінала (або None). Протухла
+    (старша за RESTART_TTL_S) команда вважається відсутньою."""
+    cleaned = _clean_str(agent_id, limit=64)
+    if not cleaned:
+        return None
+    try:
+        raw = db.get_setting(_restart_key(cleaned))
+        ts = float(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
+    except Exception:  # noqa: BLE001
+        log.exception("Не вдалося прочитати команду перезапуску")
+        return None
+    if ts is None or time.time() - ts > RESTART_TTL_S:
+        return None
+    return ts
+
+
+def ack_restart(agent_id: str, ts: float) -> bool:
+    """Телефон виконав команду з часом [ts] — прибрати її. Повертає False,
+    якщо такої (чи саме такої) команди не було."""
+    cleaned = _clean_str(agent_id, limit=64)
+    if not cleaned:
+        return False
+    current = pending_restart(cleaned)
+    if current is None or abs(current - ts) > 1.0:
+        return False
+    try:
+        db.set_setting(_restart_key(cleaned), "")
+    except Exception:  # noqa: BLE001
+        log.exception("Не вдалося зняти команду перезапуску")
+        return False
+    return True

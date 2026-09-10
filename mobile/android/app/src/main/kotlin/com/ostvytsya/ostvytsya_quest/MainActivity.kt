@@ -194,6 +194,17 @@ class MainActivity : FlutterActivity() {
                             result.success(data)
                         }
                     }
+                    "ttsSpeak" -> {
+                        // Резервне озвучення службового повідомлення системним
+                        // синтезатором; відповідь — коли договорено (на
+                        // головному потоці, як вимагає Flutter).
+                        val text = call.argument<String>("text") ?: ""
+                        val language = call.argument<String>("language") ?: "uk-UA"
+                        val main = android.os.Handler(android.os.Looper.getMainLooper())
+                        TtsSpeaker.speak(applicationContext, text, language) { ok ->
+                            main.post { result.success(ok) }
+                        }
+                    }
                     "memoryInfo" -> {
                         result.success(DeviceTelemetry.memory(applicationContext))
                     }

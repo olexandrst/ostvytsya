@@ -90,6 +90,14 @@
           </td>
           <td>
             <button class="btn btn-ghost btn-sm" type="button"
+                    data-restart-agent="{{ a.agent_id }}"
+                    title="Перезапустити квест на терміналі: поточна розмова зупиниться, персонаж оголосить перезапуск і знову слухатиме кодове слово. Телефон забирає команду раз на ~20 с">
+              🔄
+            </button>
+            {% if restart_pending.get(a.agent_id) %}
+              <div class="muted small">перезапуск очікує</div>
+            {% endif %}
+            <button class="btn btn-ghost btn-sm" type="button"
                     data-delete-agent="{{ a.agent_id }}"
                     title="Прибрати термінал зі списку. Якщо телефон і далі працює — з'явиться знову з наступним звітом">
               🗑
@@ -151,6 +159,30 @@
 <script>
   // Сторінка — це зріз стану, тож просто оновлюємо її раз на пів хвилини.
   setTimeout(function () { window.location.reload(); }, 30000);
+
+  // Перезапуск квесту на терміналі (команду забере телефон за ~20 с).
+  document.querySelectorAll("[data-restart-agent]").forEach(function (btn) {
+    btn.addEventListener("click", async function () {
+      var id = btn.dataset.restartAgent;
+      if (!window.confirm("Перезапустити квест на терміналі «" + id + "»? " +
+          "Поточна розмова з дітьми зупиниться, персонаж оголосить перезапуск " +
+          "і знову чекатиме кодове слово. Телефон забере команду протягом ~20 с.")) return;
+      btn.disabled = true;
+      try {
+        var resp = await fetch("/api/agents/" + encodeURIComponent(id) + "/restart", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ csrf: window.CSRF }),
+        });
+        var data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "не вдалося поставити команду");
+        window.location.reload();
+      } catch (err) {
+        window.alert("⚠️ " + (err.message || err));
+        btn.disabled = false;
+      }
+    });
+  });
 
   // Видалення термінала зі списку.
   document.querySelectorAll("[data-delete-agent]").forEach(function (btn) {

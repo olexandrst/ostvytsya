@@ -31,6 +31,7 @@ from domovyk_quest.envfile import load_env_file
 
 from . import wins as win_log
 from .agents import registry as agent_registry
+from .agents import ack_restart, pending_restart, request_restart, server_now
 from .mobile_characters import store as mobile_character_store
 
 # Читаємо .env ДО того, як щось із нього знадобиться (Auth зчитує оточення
@@ -636,10 +637,47 @@ async def agents_page(request: Request, user: str = Depends(require_login)):
         "csrf": csrf_token(request),
         "agents": agents,
         "online_count": sum(1 for a in agents if a.online),
+        "restart_pending": {a.agent_id: pending_restart(a.agent_id) for a in agents},
         "win_stats": win_log.stats(),
         "recent_wins": win_log.recent(50),
         "model": model_name(),
     })
+
+
+@app.post("/api/agents/{agent_id}/restart")
+async def api_agent_restart(agent_id: str, request: Request,
+                            user: str = Depends(require_login)):
+    """Поставити терміналу команду «перезапустити квест». Телефон забере її
+    зі своїм наступним опитуванням (раз на ~20 с), зупинить поточну
+    розмову, оголосить перезапуск локальним записом і знову слухатиме
+    кодове слово."""
+    body = await request.json()
+    check_csrf(request, body.get("csrf"))
+    ts = request_restart(agent_id)
+    if ts is None:
+        return JSONResponse({"error": "Некоректний ідентифікатор термінала."},
+                            status_code=400)
+    log.info("Команда перезапуску квесту для термінала «%s»", agent_id)
+    return {"ok": True, "restart_at": ts}
+
+
+@app.get("/api/agents/{agent_id}/commands")
+async def api_agent_commands(agent_id: str):
+    """Телефон питає, чи є для нього команди. Без логіна — з тих самих
+    міркувань, що й /api/agents/status. `now` — годинник сервера, щоб
+    телефон рахував свіжість команди за ним, а не за своїм."""
+    return {"restart_at": pending_restart(agent_id), "now": server_now()}
+
+
+@app.post("/api/agents/{agent_id}/commands/ack")
+async def api_agent_commands_ack(agent_id: str, request: Request):
+    """Телефон виконав команду перезапуску з цим часом — знімаємо її."""
+    try:
+        body = await request.json()
+        ts = float(body.get("restart_at"))
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"ok": False}, status_code=200)
+    return {"ok": ack_restart(agent_id, ts)}
 
 
 @app.post("/api/agents/{agent_id}/delete")

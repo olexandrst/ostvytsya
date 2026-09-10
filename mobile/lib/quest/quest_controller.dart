@@ -9,6 +9,7 @@ import '../services/session_recorder.dart';
 import '../services/settings_store.dart';
 import '../services/win_reporter.dart';
 import 'audio_pipeline.dart';
+import 'restart_notice.dart';
 import 'transcript_line.dart';
 import 'transcript_utils.dart';
 import 'transport.dart';
@@ -21,7 +22,7 @@ enum QuestPhase { listening, connecting, running, restarting, stopped }
 
 /// [ended] — сесію завершили самі гості словом завершення (Character.stopWords),
 /// напр. «Каліпсо» наприкінці екскурсії: це штатний кінець, але не перемога.
-enum QuestOutcome { won, ended, timeout, error, aborted }
+enum QuestOutcome { won, ended, timeout, error, aborted, restarted }
 
 class QuestStatusUpdate {
   final QuestPhase phase;
@@ -88,8 +89,38 @@ class QuestController {
   // Дозволяє stop() завершити активний хід миттєво, а не чекати до 1с
   // наступного тіку сторожового таймера в _runOnce().
   void Function()? _abortCurrentRun;
+  // Команда «перезапустити квест» з веб-панелі (див. RemoteCommands):
+  // обриває поточний хід (або очікування кодового слова), озвучує
+  // оголошення і повертає термінал до слухання кодових слів.
+  bool _restartRequested = false;
 
   bool get isRunning => _running;
+
+  /// Перезапуск квесту за командою з панелі. Нічого не блокує: лише
+  /// виставляє прапорець і будить активний хід — далі цикл [run] сам
+  /// озвучить оголошення й повернеться до слухання кодового слова.
+  void remoteRestart() {
+    if (!_running || _stopRequested || _restartRequested) return;
+    _restartRequested = true;
+    _say('system', 'Команда з панелі: перезапустити квест.');
+    _abortCurrentRun?.call();
+  }
+
+  /// Після обриву: оголосити перезапуск локальним записом (або системним
+  /// синтезатором) і лише потім повернутися до Vosk — щоб «промовте кодове
+  /// слово» не наклалось на слухання.
+  Future<void> _handleRemoteRestart() async {
+    _restartRequested = false;
+    _status(
+      QuestStatusUpdate(
+        QuestPhase.restarting,
+        lastOutcome: QuestOutcome.restarted,
+        runCount: _runCount,
+      ),
+    );
+    final how = await RestartNotice.play();
+    _say('system', 'Оголошення перезапуску: $how.');
+  }
 
   /// ЄДИНИЙ шлях будь-якого рядка транскрипту/діагностики: час появи,
   /// екран і текстовий журнал сесії (або преамбула, якщо сесія ще не
@@ -127,7 +158,7 @@ class QuestController {
         woke = await wakeGate.waitForWake(
           wakeWords: character.effectiveWakeWords,
           wakeOnVoice: character.wakeOnVoice,
-          isStopRequested: () => _stopRequested,
+          isStopRequested: () => _stopRequested || _restartRequested,
         );
       } catch (e) {
         _say('system', 'Розпізнавання кодового слова: $e');
@@ -138,10 +169,14 @@ class QuestController {
           );
         }
       }
-      if (_stopRequested || !woke) {
-        if (_stopRequested) break;
-        continue; // помилка розпізнавання — спробувати слухати ще раз
+      if (_stopRequested) break;
+      if (_restartRequested) {
+        // Перезапуск прийшов, поки квесту ще не було, — лише оголошення
+        // і знову слухаємо кодове слово.
+        await _handleRemoteRestart();
+        continue;
       }
+      if (!woke) continue; // помилка розпізнавання — спробувати ще раз
 
       _runCount++;
       _status(QuestStatusUpdate(QuestPhase.connecting, runCount: _runCount));
@@ -212,6 +247,10 @@ class QuestController {
       );
       await _logger.stop();
       if (_stopRequested) break;
+      if (_restartRequested) {
+        await _handleRemoteRestart();
+        continue;
+      }
       _status(
         QuestStatusUpdate(
           QuestPhase.restarting,
@@ -280,6 +319,8 @@ class QuestController {
         return 'помилка';
       case QuestOutcome.aborted:
         return 'зупинено вручну';
+      case QuestOutcome.restarted:
+        return 'перезапущено з панелі';
     }
   }
 
@@ -360,7 +401,9 @@ class QuestController {
       }
     }
 
-    _abortCurrentRun = () => finish(QuestOutcome.aborted);
+    _abortCurrentRun = () => finish(
+      _restartRequested ? QuestOutcome.restarted : QuestOutcome.aborted,
+    );
 
     var loggedFirstAudioChunk = false;
 

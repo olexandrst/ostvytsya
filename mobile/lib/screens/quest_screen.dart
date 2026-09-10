@@ -9,6 +9,7 @@ import '../quest/openai_transport.dart';
 import '../quest/quest_controller.dart';
 import '../quest/transport.dart';
 import '../services/foreground_service.dart';
+import '../services/remote_commands.dart';
 import '../services/settings_store.dart';
 import '../services/status_reporter.dart';
 
@@ -124,6 +125,8 @@ class _QuestScreenState extends State<QuestScreen> {
     QuestActivity.started(character.displayName);
     StatusReporter.instance.reportNow();
     unawaited(controller.run());
+    // Команди з панелі («перезапустити квест») — лише поки відкрито екран.
+    RemoteCommands.instance.start(onRestart: controller.remoteRestart);
   }
 
   void _promptBatteryExemption() {
@@ -144,6 +147,7 @@ class _QuestScreenState extends State<QuestScreen> {
 
   Future<void> _stop() async {
     setState(() => _stopping = true);
+    RemoteCommands.instance.stop();
     await _controller?.stop();
     await _foreground.stop();
     if (mounted) Navigator.pop(context);
@@ -153,6 +157,7 @@ class _QuestScreenState extends State<QuestScreen> {
   void dispose() {
     QuestActivity.stopped();
     StatusReporter.instance.reportNow();
+    RemoteCommands.instance.stop();
     _controller?.dispose();
     _foreground.stop();
     _scrollCtrl.dispose();
