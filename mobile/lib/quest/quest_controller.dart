@@ -342,6 +342,12 @@ class QuestController {
     var userSpokeSinceTurn = false;
     var autoContinues = 0;
     var lastNudgeAt = DateTime.now();
+    // Скільки службових сигналів поспіль лишились без жодної відповіді
+    // (без turnComplete). Три — просимо транспорт перепід'єднатися (сокет
+    // міг зависнути без помилки; контекст зберігається); шість — квест
+    // застряг остаточно, завершуємо спробу, щоб термінал не мовчав годину.
+    var nudgesUnanswered = 0;
+    var reconnectAsked = false;
     var lastUserVoiceAt = DateTime.now();
     var agentFinishedAt = DateTime.now();
 
@@ -455,6 +461,8 @@ class QuestController {
           userBuf = '';
           modelBuf = '';
           userSpokeSinceTurn = false;
+          nudgesUnanswered = 0;
+          reconnectAsked = false;
           audio.unmuteIfNoAudioYet();
           if (won && !finishing) {
             // Кодове слово прозвучало — даємо договорити фінальну репліку
@@ -490,6 +498,10 @@ class QuestController {
           }
           break;
         case QuestEventKind.interrupted:
+          // Сервер обірвав репліку персонажа, бо VAD почув «голос» у
+          // мікрофоні — справжній чи шум. У журналі це пояснює обірвані на
+          // півслові репліки на кшталт «Гм-м… не».
+          _say('system', 'Персонажа перервано: сервер почув голос чи шум.');
           break;
         case QuestEventKind.info:
           _say('system', evt.text ?? '');
@@ -592,11 +604,37 @@ class QuestController {
         if (lastUserVoiceAt.isAfter(since)) since = lastUserVoiceAt;
         if (lastNudgeAt.isAfter(since)) since = lastNudgeAt;
         if (now.difference(since).inSeconds >= waitS) {
+          if (nudgesUnanswered >= 6) {
+            // Ні голос людей, ні шість сигналів поспіль, ні перепід'єднання
+            // не дали відповіді — модель не відповідає взагалі. Тримати
+            // мовчазний термінал до тайм-ауту тиші (до 30 хв) немає сенсу:
+            // завершуємо спробу, застосунок знову слухає кодове слово.
+            _say(
+              'system',
+              'Персонаж не відповідає на службові сигнали ($nudgesUnanswered '
+              'поспіль, навіть після перепід\'єднання) — завершую спробу.',
+            );
+            finish(QuestOutcome.error);
+            return;
+          }
+          if (nudgesUnanswered >= 3 && !reconnectAsked) {
+            reconnectAsked = true;
+            _say(
+              'system',
+              'Персонаж не відповів на $nudgesUnanswered сигнали поспіль — '
+              "перепід'єднуюсь до Gemini зі збереженням розмови.",
+            );
+            unawaited(
+              transport.reconnect('модель не відповідає на службові сигнали'),
+            );
+          }
           autoContinues++;
+          nudgesUnanswered++;
           lastNudgeAt = now;
           _say(
             'system',
-            'Люди мовчать понад $waitS с — прошу персонажа продовжити самому.',
+            'Люди мовчать понад $waitS с — прошу персонажа продовжити самому'
+            '${nudgesUnanswered > 1 ? ' (без відповіді: $nudgesUnanswered)' : ''}.',
           );
           transport.sendText(
             '[Службовий сигнал — не читай його вголос. Люди мовчать уже '

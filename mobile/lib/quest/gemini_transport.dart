@@ -141,6 +141,11 @@ class GeminiTransport implements QuestTransport {
       _uri,
       headers: {'x-goog-api-key': apiKey},
       connectTimeout: _connectTimeout,
+      // Пінг раз на 15 с: на 4G у парку з'єднання може «зависнути» без
+      // жодної помилки — сокет мовчить, наші сигнали йдуть у порожнечу, а
+      // TCP помічає обрив лише через багато хвилин. З пінгом мертве
+      // з'єднання закривається швидко → onDone → відновлення з handle.
+      pingInterval: const Duration(seconds: 15),
     );
     await channel.ready;
     if (_closedByUs) {
@@ -212,6 +217,15 @@ class GeminiTransport implements QuestTransport {
   /// Перепід'єднатися з останнім handle. Кілька спроб із наростаючою
   /// паузою — мережа в парку може зникати на секунди при перемиканні
   /// wifi/4g. Якщо не вдалося зовсім — лише тоді квест завершується.
+  /// Примусове перепід'єднання з handle відновлення (контекст розмови
+  /// зберігається) — контролер просить його, коли модель перестала
+  /// відповідати на службові сигнали: сокет міг «зависнути» без помилки.
+  @override
+  Future<void> reconnect(String why) async {
+    if (_closedByUs || _reconnecting) return;
+    await _reconnect(why);
+  }
+
   Future<void> _reconnect(String why) async {
     if (_reconnecting || _closedByUs) return;
     _reconnecting = true;
@@ -288,6 +302,18 @@ class GeminiTransport implements QuestTransport {
       },
       'inputAudioTranscription': {},
       'outputAudioTranscription': {},
+      // Серверний детектор мовлення (VAD): низька чутливість до ПОЧАТКУ
+      // мовлення. У парку з Bluetooth-мікрофоном шум і далекі голоси
+      // вмикали «людина говорить»: модель обривала власну репліку на
+      // півслові («Гм-м… не»), а далі вважала, що людина досі говорить, і
+      // не відповідала ні на голос, ні на службові сигнали — квест
+      // застрягав. Кінець мовлення лишаємо типовим, щоб не обрізати дітей,
+      // які роблять паузи посеред відповіді.
+      'realtimeInputConfig': {
+        'automaticActivityDetection': {
+          'startOfSpeechSensitivity': 'START_SENSITIVITY_LOW',
+        },
+      },
       // Стискання контексту — налаштування персонажа. Увімкнено: явні
       // пороги (пам'ять ~8–15 хв, історія не перечитується цілком на
       // кожному ході — дешевше). Вимкнено: типове ковзне вікно Google без

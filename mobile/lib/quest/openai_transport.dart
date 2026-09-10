@@ -110,6 +110,10 @@ class OpenAiTransport implements QuestTransport {
   @override
   void setRecoveryEnabled(bool enabled) {}
 
+  /// Відновлення сесії з контекстом тут не реалізовано — нічого не робимо.
+  @override
+  Future<void> reconnect(String why) async {}
+
   @override
   void sendText(String text) {
     if (!_sessionReady) return;
