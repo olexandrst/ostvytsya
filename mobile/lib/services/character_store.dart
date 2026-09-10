@@ -15,6 +15,7 @@ class CharacterStore {
     'domovychok',
     'vodyanyk',
     'povitrulya',
+    'povitrulya-nova',
     'derevo',
     'vitroplav',
     'lord-monety',
@@ -121,9 +122,10 @@ class CharacterStore {
         // Пошкоджений файл персонажа — пропускаємо, а не валимо весь список.
       }
     }
-    // Порядок на головному екрані: спершу три персонажі парку в потрібній
-    // черзі (Повітруля, Дерево, Домовичок), далі решта за назвою.
-    const pinned = ['povitrulya', 'derevo', 'domovychok'];
+    // Порядок на головному екрані: спершу персонажі парку в потрібній черзі
+    // (Повітруля, поруч її спрощена версія, Дерево, Домовичок), далі решта
+    // за назвою.
+    const pinned = ['povitrulya', 'povitrulya-nova', 'derevo', 'domovychok'];
     int rank(Character c) {
       final i = pinned.indexOf(c.id);
       return i < 0 ? pinned.length : i;
