@@ -14,6 +14,7 @@ class CharacterStore {
   static const _defaultIds = [
     'domovychok',
     'domovychok-18',
+    'derevo-18',
     'vodyanyk',
     'povitrulya',
     'povitrulya-nova',
@@ -124,13 +125,14 @@ class CharacterStore {
       }
     }
     // Порядок на головному екрані: спершу персонажі парку в потрібній черзі
-    // (Повітруля, поруч її спрощена версія, Дерево, Домовичок і його доросла
-    // версія), далі решта за назвою.
+    // (Повітруля, поруч її спрощена версія, Дерево, Домовичок, далі їхні
+    // дорослі версії), далі решта за назвою.
     const pinned = [
       'povitrulya',
       'povitrulya-nova',
       'derevo',
       'domovychok',
+      'derevo-18',
       'domovychok-18',
     ];
     int rank(Character c) {
