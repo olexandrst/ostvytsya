@@ -18,6 +18,7 @@ class CharacterStore {
     'vodyanyk',
     'povitrulya',
     'povitrulya-nova',
+    'povitrulya-18',
     'derevo',
     'vitroplav',
     'lord-monety',
@@ -132,6 +133,7 @@ class CharacterStore {
       'povitrulya-nova',
       'derevo',
       'domovychok',
+      'povitrulya-18',
       'derevo-18',
       'domovychok-18',
     ];
