@@ -1,8 +1,37 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// ── Підпис APK ───────────────────────────────────────────────────────────────
+// Щоб APK можна було СТАВИТИ ПОВЕРХ наявного (оновлення без видалення), кожна
+// збірка мусить бути підписана ТИМ САМИМ ключем: при розбіжності підпису
+// Android відмовляє в оновленні (INSTALL_FAILED_UPDATE_INCOMPATIBLE), і
+// застосунок доводиться спершу видаляти — разом із ключами й налаштуваннями.
+// Раніше release підписувався debug-ключем, а Gradle генерує його на кожній
+// машині (і на КОЖНОМУ раннері CI) заново — тож кожна збірка мала новий підпис.
+//
+// Джерело ключа, за пріоритетом:
+//   1. android/key.properties (storeFile, storePassword, keyAlias, keyPassword)
+//      або ті самі значення у змінних середовища ANDROID_KEYSTORE_FILE,
+//      ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD —
+//      так у CI можна підкласти власний приватний ключ із секретів репозиторію;
+//   2. android/ostvytsya-shared.jks — спільний ключ парку, що лежить у
+//      репозиторії з паролем «android» (як у типового debug-ключа Android).
+//      Це НЕ таємниця, а лише гарантія стабільного підпису для APK, які
+//      ставлять вручну, а не через Google Play. Хочеш справжній приватний
+//      ключ — додай його через п.1, нічого іншого міняти не треба.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("key.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
+fun signingSetting(property: String, env: String, fallback: String): String =
+    (keystoreProperties.getProperty(property) ?: System.getenv(env))
+        ?.takeIf { it.isNotBlank() } ?: fallback
 
 android {
     namespace = "com.ostvytsya.ostvytsya_quest"
@@ -17,21 +46,39 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.ostvytsya.ostvytsya_quest"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
+        // Номер версії (versionCode) мусить лише зростати, інакше Android
+        // вважає нову збірку «відкатом» і не ставить її поверх. У CI його
+        // задає номер запуску збірки: flutter build apk --build-number=…
+        // (див. .github/workflows/mobile-build.yml); локально береться з
+        // pubspec.yaml.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("shared") {
+            storeFile = rootProject.file(
+                signingSetting("storeFile", "ANDROID_KEYSTORE_FILE", "ostvytsya-shared.jks")
+            )
+            storePassword = signingSetting("storePassword", "ANDROID_KEYSTORE_PASSWORD", "android")
+            keyAlias = signingSetting("keyAlias", "ANDROID_KEY_ALIAS", "ostvytsya")
+            keyPassword = signingSetting("keyPassword", "ANDROID_KEY_PASSWORD", "android")
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("shared")
+        }
+        // Debug — тим самим ключем: так збірка з `flutter run` і APK із CI
+        // стають взаємозамінними (ставляться одна поверх одної без видалення).
+        debug {
+            signingConfig = signingConfigs.getByName("shared")
         }
     }
 }

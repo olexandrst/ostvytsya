@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../constants.dart';
 import '../models/character.dart';
+import '../services/app_version.dart';
 import '../services/character_store.dart';
 import '../services/device_memory.dart';
 import '../services/session_logger.dart';
@@ -287,7 +288,7 @@ class QuestController {
           'слово перемоги: ${character.winWord}',
       'Спроба №$_runCount',
       'Термінал: ${await _settings.getInstanceId()}',
-      'Версія застосунку: ${kAppVersion.isEmpty ? '—' : kAppVersion}',
+      'Версія застосунку: ${AppVersion.label}',
       'Запис аудіо: ${audioName ?? 'вимкнено в налаштуваннях'}',
       "Пам'ять на старті: ${await DeviceMemory.describe() ?? '—'}",
     ];

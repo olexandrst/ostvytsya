@@ -102,6 +102,22 @@ class MainActivity : FlutterActivity() {
                             Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
                         )
                     }
+                    "appVersion" -> {
+                        // Версія САМОГО встановленого APK (versionName/versionCode
+                        // із build.gradle.kts), а не щось зашите в Dart-код: так
+                        // у налаштуваннях і журналах видно точно ту збірку, що
+                        // стоїть на телефоні.
+                        val info = packageManager.getPackageInfo(packageName, 0)
+                        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            info.longVersionCode
+                        } else {
+                            @Suppress("DEPRECATION")
+                            info.versionCode.toLong()
+                        }
+                        result.success(
+                            mapOf("name" to (info.versionName ?: ""), "code" to code)
+                        )
+                    }
                     "acknowledgeExitReason" -> {
                         acknowledgeExitReason()
                         result.success(null)

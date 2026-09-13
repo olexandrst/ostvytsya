@@ -76,6 +76,26 @@ class SettingsStore {
     }
   }
 
+  /// Створити резервну копію, якщо її ще немає, а налаштування на пристрої
+  /// вже є. Потрібно для терміналів, які налаштували РАНІШЕ, ніж з'явилось
+  /// резервне копіювання: без цього їхні ключі й ідентифікатор лежали б лише
+  /// в пам'яті застосунку й зникли б при перевстановленні (копія інакше
+  /// з'являється тільки після наступної зміни налаштувань).
+  Future<void> backupIfMissing() async {
+    try {
+      final existing = await _backup.loadSettings();
+      if (existing != null && existing.trim().length > 2) return;
+      final hasSomething = await _storage.read(key: _geminiKeyName) ??
+          await _storage.read(key: _openaiKeyName) ??
+          await _storage.read(key: _instanceIdName);
+      if (hasSomething == null || hasSomething.isEmpty) return;
+      await _syncBackup();
+    } catch (_) {
+      // Копія — запобіжник, а не умова запуску: не вдалося, спробуємо
+      // наступного разу (або при першій же зміні налаштувань).
+    }
+  }
+
   Future<String?> getGeminiApiKey() => _storage.read(key: _geminiKeyName);
   Future<String?> getOpenAiApiKey() => _storage.read(key: _openaiKeyName);
 

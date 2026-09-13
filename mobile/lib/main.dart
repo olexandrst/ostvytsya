@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
+import 'services/app_version.dart';
 import 'services/character_sync.dart';
 import 'services/settings_store.dart';
 import 'services/status_reporter.dart';
@@ -27,7 +28,13 @@ void main() {
       // вибір аудіо-пристроїв тощо) з резервної копії у спільній теці — сам
       // Android їх не відновлює, бо APK ставиться збоку, а не з Play Store.
       WidgetsFlutterBinding.ensureInitialized();
+      // Версія встановленого APK — для налаштувань і шапки журналу сесії.
+      await AppVersion.load();
       await SettingsStore().restoreIfEmpty();
+      // І навпаки: якщо налаштування на телефоні є, а резервної копії ще
+      // немає (її завели пізніше, ніж цей термінал налаштували), — створити
+      // її зараз, щоб ключі й ідентифікатор не загубились при перевстановленні.
+      await SettingsStore().backupIfMissing();
       // Звітування саме перевіряє, чи його ввімкнено (типово — так, у
       // панель парку kDefaultServerUrl), — тут просто заводимо таймер.
       StatusReporter.instance.start();

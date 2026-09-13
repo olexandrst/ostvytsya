@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../constants.dart';
+import '../services/app_version.dart';
 import '../services/audio_device_service.dart';
 import '../services/character_sync.dart';
 import '../services/settings_store.dart';
@@ -390,7 +391,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const Divider(),
                 const SizedBox(height: 8),
                 Text(
-                  'Версія: ${kAppVersion.isEmpty ? 'локальна збірка' : kAppVersion}',
+                  'Версія: ${AppVersion.label}',
                   style: const TextStyle(color: Colors.grey),
                 ),
               ],

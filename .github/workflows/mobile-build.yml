@@ -38,12 +38,36 @@ jobs:
       - name: flutter analyze
         run: flutter analyze
 
+      # Кожна збірка — нова версія. Major.minor беремо з pubspec.yaml, а
+      # patch і versionCode — з наскрізного номера запуску цього воркфлоу:
+      # він лише зростає, а Android ставить APK поверх наявного тільки тоді,
+      # коли versionCode новіший (і підпис той самий — див. build.gradle.kts).
+      - name: Номер версії
+        id: version
+        run: |
+          base=$(grep -m1 '^version:' pubspec.yaml | sed -E 's/^version: *//' | cut -d+ -f1)
+          major_minor=$(echo "$base" | cut -d. -f1,2)
+          echo "name=${major_minor}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "sha7=$(echo '${{ github.sha }}' | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
       - name: flutter build apk --release
-        run: flutter build apk --release --dart-define=GIT_SHA=${{ github.sha }}
+        run: |
+          flutter build apk --release \
+            --build-name='${{ steps.version.outputs.name }}' \
+            --build-number='${{ steps.version.outputs.code }}' \
+            --dart-define=GIT_SHA=${{ github.sha }}
+
+      # Ім'я файла містить версію й коміт — щоб на телефоні й у переписці було
+      # видно, яка саме це збірка, ще до встановлення.
+      - name: Назвати APK версією
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             "build/app/outputs/flutter-apk/ostvytsya-${{ steps.version.outputs.name }}-${{ steps.version.outputs.sha7 }}.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ostvytsya-quest-release-apk
-          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          name: ostvytsya-quest-${{ steps.version.outputs.name }}
+          path: mobile/build/app/outputs/flutter-apk/ostvytsya-*.apk
           if-no-files-found: error
