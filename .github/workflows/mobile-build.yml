@@ -65,6 +65,40 @@ jobs:
           mv build/app/outputs/flutter-apk/app-release.apk \
              "build/app/outputs/flutter-apk/ostvytsya-${{ steps.version.outputs.name }}-${{ steps.version.outputs.sha7 }}.apk"
 
+      # Головна гарантія оновлення «поверх» без видалення застосунку: підпис
+      # APK мусить збігатися з ключем, яким підписані попередні збірки. Тут ми
+      # це не обіцяємо, а ПЕРЕВІРЯЄМО — зчитуємо відбиток сертифіката з
+      # готового APK і порівнюємо з відбитком ключа, яким збірка мала
+      # підписатися. Не збіглось — збірка падає, а не роз'їжджається тихо.
+      # Відбиток ще й друкується в лог: його можна порівняти між будь-якими
+      # двома збірками (і з тим, що показує телефон).
+      - name: Перевірити підпис APK
+        run: |
+          set -euo pipefail
+          apk=$(ls build/app/outputs/flutter-apk/ostvytsya-*.apk)
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          apksigner=$(ls "$sdk"/build-tools/*/apksigner | sort -V | tail -1)
+
+          # Той самий вибір ключа, що й у android/app/build.gradle.kts.
+          store="${ANDROID_KEYSTORE_FILE:-ostvytsya-shared.jks}"
+          storepass="${ANDROID_KEYSTORE_PASSWORD:-android}"
+          alias="${ANDROID_KEY_ALIAS:-ostvytsya}"
+
+          fingerprint() { tr -d ': ' | tr 'A-F' 'a-f'; }
+          expected=$(keytool -list -v -keystore "android/$store" \
+                       -storepass "$storepass" -alias "$alias" \
+                     | grep -m1 'SHA256:' | awk '{print $2}' | fingerprint)
+          actual=$("$apksigner" verify --print-certs "$apk" \
+                   | grep -m1 -i 'SHA-256 digest' | awk '{print $NF}' | fingerprint)
+
+          echo "Ключ збірки:  $expected"
+          echo "Підпис APK:   $actual"
+          if [ -z "$actual" ] || [ "$actual" != "$expected" ]; then
+            echo "::error::APK підписано не тим ключем — оновлення поверх наявного застосунку не встановиться."
+            exit 1
+          fi
+          echo "✅ Підпис стабільний: APK стане оновленням для попередніх збірок."
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
