@@ -24,7 +24,6 @@ import 'wake_matcher.dart';
 /// як повернути результат.
 class WakeGateService {
   static const sampleRate = 16000;
-  static const _fuzzyThreshold = 0.70;
 
   /// Скільки послідовних помилок розпізнавання поспіль допустимо, перш ніж
   /// вважати мікрофон/розпізнавач непрацездатним і повідомити про помилку,
@@ -111,6 +110,16 @@ class WakeGateService {
     final recognizer = _recognizer!;
     await recognizer.reset();
 
+    // Поріг нечіткого збігу — з налаштувань (Налаштування → Кодове слово):
+    // точний збіг спрацьовує завжди, поріг стосується спотворених варіантів.
+    // Перечитуємо на кожне очікування, щоб зміна діяла без перезапуску.
+    final thresholdPercent = await _settings.getWakeThresholdPercent();
+    final fuzzyThreshold = thresholdPercent / 100.0;
+    _diagCtrl.add(
+      'Поріг збігу кодового слова: $thresholdPercent %'
+      '${thresholdPercent == kDefaultWakeThresholdPercent ? ' (типово)' : ''}.',
+    );
+
     final completer = Completer<bool>();
     void finish(bool value) {
       if (!completer.isCompleted) completer.complete(value);
@@ -169,7 +178,7 @@ class WakeGateService {
             _diagCtrl.add('Чую: «$text»');
           }
           if (text.isNotEmpty &&
-              matchesWakeWord(text, wakeWords, threshold: _fuzzyThreshold)) {
+              matchesWakeWord(text, wakeWords, threshold: fuzzyThreshold)) {
             finish(true);
             return;
           }

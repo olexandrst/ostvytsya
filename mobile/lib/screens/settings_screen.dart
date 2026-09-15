@@ -30,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _showOpenAi = false;
   bool _sessionRecordingEnabled = false;
   bool _statusReportingEnabled = false;
+  int _wakeThreshold = kDefaultWakeThresholdPercent;
   final _statusServerCtrl = TextEditingController();
 
   List<AudioDevice> _inputDevices = [];
@@ -56,6 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _sessionRecordingEnabled = await _store.getSessionRecordingEnabled();
     _statusReportingEnabled = await _store.getStatusReportingEnabled();
     _statusServerCtrl.text = await _store.getStatusServerUrl();
+    _wakeThreshold = await _store.getWakeThresholdPercent();
     _geminiCtrl.text = gemini ?? '';
     _openaiCtrl.text = openai ?? '';
     _instanceIdCtrl.text = instanceId;
@@ -90,6 +92,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _store.setSessionRecordingEnabled(_sessionRecordingEnabled);
     await _store.setStatusReportingEnabled(_statusReportingEnabled);
     await _store.setStatusServerUrl(_statusServerCtrl.text);
+    // Поріг підхоплюється при наступному очікуванні кодового слова (тобто
+    // після поточного квесту чи при відкритті екрана квесту).
+    await _store.setWakeThresholdPercent(_wakeThreshold);
     // Перезапускаємо звітування з новими налаштуваннями (або зупиняємо,
     // якщо його щойно вимкнули).
     if (_statusReportingEnabled) {
@@ -270,6 +275,66 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onChanged: (id) => setState(() => _selectedOutputId = id),
                 ),
                 const SizedBox(height: 32),
+                const Divider(),
+                const SizedBox(height: 8),
+                const Text(
+                  'Кодове слово',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Наскільки почуте має бути схожим на кодове слово, щоб '
+                  'персонаж прокинувся. Точний збіг спрацьовує завжди; поріг '
+                  'стосується спотворених варіантів (Vosk часто чує «шановнй», '
+                  '«мудрост», «князя»).\n\n'
+                  '◀ Ліворуч (менше) — ЧУТЛИВІШЕ: прокидається частіше, але й '
+                  'на схожі слова та шум.\n'
+                  '▶ Праворуч (більше) — СУВОРІШЕ: треба вимовити точніше, '
+                  'хибних спрацювань менше; 100 % — лише точний збіг.\n\n'
+                  'Типово $kDefaultWakeThresholdPercent %. Діє з наступного '
+                  'очікування кодового слова.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+                Row(
+                  children: [
+                    const Text('чутливіше'),
+                    Expanded(
+                      child: Slider(
+                        value: _wakeThreshold.toDouble(),
+                        min: kWakeThresholdMinPercent.toDouble(),
+                        max: kWakeThresholdMaxPercent.toDouble(),
+                        divisions:
+                            (kWakeThresholdMaxPercent -
+                                kWakeThresholdMinPercent) ~/
+                            5,
+                        label: '$_wakeThreshold %',
+                        onChanged: (v) =>
+                            setState(() => _wakeThreshold = v.round()),
+                      ),
+                    ),
+                    const Text('суворіше'),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Text(
+                      'Поріг збігу: $_wakeThreshold %'
+                      '${_wakeThreshold == kDefaultWakeThresholdPercent ? ' (типово)' : ''}',
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: _wakeThreshold == kDefaultWakeThresholdPercent
+                          ? null
+                          : () => setState(
+                              () => _wakeThreshold =
+                                  kDefaultWakeThresholdPercent,
+                            ),
+                      child: const Text('Скинути до типового'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 8),
                 const Text(

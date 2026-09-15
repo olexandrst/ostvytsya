@@ -18,6 +18,7 @@ class SettingsStore {
   static const _sessionRecordingEnabledName = 'session_recording_enabled';
   static const _statusReportingEnabledName = 'status_reporting_enabled';
   static const _statusServerUrlName = 'status_server_url';
+  static const _wakeThresholdName = 'wake_threshold_percent';
 
   final _storage = const FlutterSecureStorage();
   final _backup = PersistentBackup();
@@ -33,6 +34,7 @@ class SettingsStore {
     _sessionRecordingEnabledName,
     _statusReportingEnabledName,
     _statusServerUrlName,
+    _wakeThresholdName,
   ];
 
   /// Перекласти поточні налаштування у резервну копію. Викликається після
@@ -257,6 +259,31 @@ class SettingsStore {
       await _storage.delete(key: _statusServerUrlName);
     } else {
       await _storage.write(key: _statusServerUrlName, value: v);
+    }
+    await _syncBackup();
+  }
+
+  /// Поріг нечіткого збігу кодового слова у відсотках (див.
+  /// kDefaultWakeThresholdPercent): менше — чутливіше, більше — суворіше.
+  /// Нічого не збережено чи значення поза межами — типовий поріг.
+  Future<int> getWakeThresholdPercent() async {
+    final v = int.tryParse((await _storage.read(key: _wakeThresholdName)) ?? '');
+    if (v == null ||
+        v < kWakeThresholdMinPercent ||
+        v > kWakeThresholdMaxPercent) {
+      return kDefaultWakeThresholdPercent;
+    }
+    return v;
+  }
+
+  Future<void> setWakeThresholdPercent(int value) async {
+    final v = value.clamp(kWakeThresholdMinPercent, kWakeThresholdMaxPercent);
+    if (v == kDefaultWakeThresholdPercent) {
+      // Типове значення не зберігаємо: якщо типовий поріг колись зміниться
+      // в новій збірці, термінали без власного вибору підхоплять новий.
+      await _storage.delete(key: _wakeThresholdName);
+    } else {
+      await _storage.write(key: _wakeThresholdName, value: '$v');
     }
     await _syncBackup();
   }

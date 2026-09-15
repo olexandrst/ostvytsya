@@ -286,6 +286,9 @@ class QuestController {
           'провайдер ${character.provider}, голос $voice',
       'Кодове слово: ${character.effectiveWakeWords.join(', ')} · '
           'слово перемоги: ${character.winWord}',
+      'Поріг збігу кодового слова: '
+          '${await _settings.getWakeThresholdPercent()} % '
+          '(типово $kDefaultWakeThresholdPercent)',
       'Спроба №$_runCount',
       'Термінал: ${await _settings.getInstanceId()}',
       'Версія застосунку: ${AppVersion.label}',

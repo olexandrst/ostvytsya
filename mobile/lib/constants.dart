@@ -182,6 +182,18 @@ const double kWinSafetyTimeoutS = 15.0;
 const String kVoskModelUrl =
     'https://alphacephei.com/vosk/models/vosk-model-small-uk-v3-small.zip';
 
+/// Поріг нечіткого збігу кодового слова, у відсотках: наскільки почуте Vosk
+/// має бути схожим на кодове слово (відстань Левенштейна, див.
+/// wake_matcher.dart), щоб персонаж прокинувся. Точний збіг спрацьовує завжди,
+/// поріг стосується лише спотворених варіантів («шановнй», «князя» тощо).
+/// МЕНШЕ — чутливіше (частіше прокидається, але й на схожі слова та шум);
+/// БІЛЬШЕ — суворіше (треба вимовити точніше, менше хибних спрацювань).
+/// Налаштовується в застосунку (Налаштування → Кодове слово); тут — типове
+/// значення й межі повзунка.
+const int kDefaultWakeThresholdPercent = 70;
+const int kWakeThresholdMinPercent = 50;
+const int kWakeThresholdMaxPercent = 100;
+
 /// SHA коміту, з якого зібрано APK — передається в CI через
 /// `--dart-define=GIT_SHA=...` (.github/workflows/mobile-build.yml). Порожньо
 /// при локальній збірці без цього define (напр. `flutter run`).
