@@ -57,12 +57,16 @@ object SessionRecordingsStore {
      * спільний хелпер: так її бачить лінт Android (NewApi), який на
      * release-збірці фатальний і не вміє «дивитись» усередину чужої функції.
      */
-    fun create(context: Context, displayName: String): Pair<Uri, ParcelFileDescriptor>? {
+    fun create(
+        context: Context,
+        displayName: String,
+        mime: String = MIME
+    ): Pair<Uri, ParcelFileDescriptor>? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         return try {
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                put(MediaStore.MediaColumns.MIME_TYPE, MIME)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
                 put(MediaStore.MediaColumns.RELATIVE_PATH, RELATIVE_PATH)
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
@@ -95,6 +99,64 @@ object SessionRecordingsStore {
         } catch (err: Throwable) {
             Log.e(TAG, "Не вдалося завершити запис у медіатеці", err)
         }
+    }
+
+    /** Префікс і кількість зразків звуку фази слухання, які зберігаємо. */
+    private const val WAKE_SAMPLE_PREFIX = "wake_"
+    private const val WAKE_SAMPLES_KEEP = 10
+
+    /**
+     * Зберегти короткий зразок PCM16 моно як WAV у ту саму теку `Music/Оствиця`
+     * (діагностика фази слухання кодового слова: що НАСПРАВДІ чує Vosk —
+     * смуга, спотворення, швидкість). Файл видно в «Записах сесій», його
+     * можна прослухати й поділитися. Лишаємо лише [WAKE_SAMPLES_KEEP]
+     * найновіших зразків, старші прибираємо.
+     */
+    fun saveWav(context: Context, displayName: String, sampleRate: Int, pcm: ByteArray): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        val (uri, pfd) = create(context, displayName, "audio/wav") ?: return false
+        return try {
+            pfd.use { fd ->
+                java.io.FileOutputStream(fd.fileDescriptor).use { out ->
+                    out.write(wavHeader(sampleRate, pcm.size))
+                    out.write(pcm)
+                    out.flush()
+                }
+            }
+            markComplete(context, uri)
+            pruneWakeSamples(context)
+            true
+        } catch (err: Throwable) {
+            Log.e(TAG, "Не вдалося зберегти зразок звуку", err)
+            discard(context, uri)
+            false
+        }
+    }
+
+    private fun wavHeader(sampleRate: Int, dataSize: Int): ByteArray {
+        val bb = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        bb.put("RIFF".toByteArray(Charsets.US_ASCII))
+        bb.putInt(36 + dataSize)
+        bb.put("WAVE".toByteArray(Charsets.US_ASCII))
+        bb.put("fmt ".toByteArray(Charsets.US_ASCII))
+        bb.putInt(16)                       // розмір блоку fmt
+        bb.putShort(1.toShort())            // PCM
+        bb.putShort(1.toShort())            // моно
+        bb.putInt(sampleRate)
+        bb.putInt(sampleRate * 2)           // байтів за секунду
+        bb.putShort(2.toShort())            // байтів на кадр
+        bb.putShort(16.toShort())           // біт на семпл
+        bb.put("data".toByteArray(Charsets.US_ASCII))
+        bb.putInt(dataSize)
+        return bb.array()
+    }
+
+    private fun pruneWakeSamples(context: Context) {
+        // list() уже відсортовано за датою, новіші першими.
+        list(context)
+            .filter { (it["name"] as? String)?.startsWith(WAKE_SAMPLE_PREFIX) == true }
+            .drop(WAKE_SAMPLES_KEEP)
+            .forEach { entry -> (entry["uri"] as? String)?.let { discard(context, Uri.parse(it)) } }
     }
 
     /** Прибрати порожній запис, який так і не вдалося наповнити. */

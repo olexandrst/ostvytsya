@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -56,6 +57,29 @@ class RecordingsStore {
     final dir = Directory('${base.path}/sessions');
     await dir.create(recursive: true);
     return dir;
+  }
+
+  /// Зберегти зразок звуку фази слухання (PCM16 моно, [sampleRate]) як WAV
+  /// у ту саму медіатеку, що й записи квестів, — він з'явиться в «Записах
+  /// сесій», його можна прослухати й поділитися. Нативний бік лишає лише
+  /// десять найновіших зразків.
+  static Future<bool> saveWakeSample({
+    required String name,
+    required int sampleRate,
+    required Uint8List pcm16,
+  }) async {
+    try {
+      final ok = await _channel.invokeMethod<bool>('wakeSampleSave', {
+        'name': name,
+        'sampleRate': sampleRate,
+        'bytes': pcm16,
+      });
+      return ok ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
   }
 
   Future<List<RecordingEntry>> list() async {

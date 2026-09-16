@@ -79,6 +79,29 @@ class QuestController {
   final _preWake = <TranscriptLine>[];
   static const _preWakeMax = 15;
 
+  /// Ключові рядки очікування (який мікрофон і канал, справжній маршрут,
+  /// попередження, поріг, зразок звуку) тримаємо окремо, щоб їх не
+  /// витіснили з преамбули «Чую: …» і рівень мікрофона раз на 15 с.
+  final _preWakePinned = <TranscriptLine>[];
+  static const _preWakePinnedMax = 12;
+  static const _pinnedPrefixes = [
+    'Слухаю мікрофон',
+    'Маршрут звуку',
+    '⚠️',
+    'Bluetooth-мікрофон',
+    'Поріг збігу',
+    'Зразок звуку',
+    'Модель Vosk',
+    'Не вдалося',
+  ];
+
+  static bool _isPinnedPreWake(String text) {
+    for (final p in _pinnedPrefixes) {
+      if (text.startsWith(p)) return true;
+    }
+    return false;
+  }
+
   /// Скільки разів поспіль просити персонажа продовжити, не почувши жодного
   /// слова від людей: далі — хай спрацьовує тайм-аут тиші.
   static const _maxAutoContinues = 15;
@@ -132,6 +155,11 @@ class QuestController {
     if (!_transcriptCtrl.isClosed) _transcriptCtrl.add(line);
     if (_logger.isActive) {
       _logger.log(line);
+    } else if (who == 'system' && _isPinnedPreWake(text)) {
+      _preWakePinned.add(line);
+      if (_preWakePinned.length > _preWakePinnedMax) {
+        _preWakePinned.removeAt(0);
+      }
     } else {
       _preWake.add(line);
       if (_preWake.length > _preWakeMax) _preWake.removeAt(0);
@@ -193,8 +221,9 @@ class QuestController {
       await _logger.start(
         baseName,
         header: await _logHeader(startedAt, recording ? '$baseName.m4a' : null),
-        preamble: List<TranscriptLine>.from(_preWake),
+        preamble: [..._preWakePinned, ..._preWake],
       );
+      _preWakePinned.clear();
       _preWake.clear();
       _say('system', 'Журнал сесії: ${_logger.location}');
       if (recording) {

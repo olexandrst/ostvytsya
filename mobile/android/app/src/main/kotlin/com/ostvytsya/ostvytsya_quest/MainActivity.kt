@@ -280,6 +280,20 @@ class MainActivity : FlutterActivity() {
                     "listSessionRecordings" -> {
                         result.success(SessionRecordingsStore.list(applicationContext))
                     }
+                    "wakeSampleSave" -> {
+                        // Зразок звуку фази слухання (PCM16 моно) → WAV у
+                        // «Записах сесій». Запис у медіатеку — не на головному
+                        // потоці, щоб не смикати інтерфейс і мікрофон.
+                        val name = call.argument<String>("name")
+                        val sampleRate = call.argument<Int>("sampleRate") ?: 16000
+                        val bytes = call.argument<ByteArray>("bytes")
+                        val main = android.os.Handler(android.os.Looper.getMainLooper())
+                        Thread {
+                            val ok = name != null && bytes != null &&
+                                SessionRecordingsStore.saveWav(applicationContext, name, sampleRate, bytes)
+                            main.post { result.success(ok) }
+                        }.start()
+                    }
                     "sessionLogCreate" -> {
                         val name = call.argument<String>("name")
                         result.success(
