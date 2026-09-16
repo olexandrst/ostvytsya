@@ -3,6 +3,7 @@ package com.ostvytsya.ostvytsya_quest
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.MediaRecorder
 import android.os.Build
 
 /**
@@ -30,6 +31,74 @@ object AudioDeviceUtils {
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val flag = if (direction == DIRECTION_OUTPUT) AudioManager.GET_DEVICES_OUTPUTS else AudioManager.GET_DEVICES_INPUTS
         return am.getDevices(flag).firstOrNull { it.id == id }
+    }
+
+    /**
+     * СПРАВЖНІЙ стан маршрутизації звуку — для журналу сесії.
+     *
+     * Назва обраного пристрою в діагностиці («Слухаю мікрофон «Jabra…»») —
+     * це лише намір: плагін запису міг не підняти голосовий канал Bluetooth,
+     * і тоді AudioRecord тихо пише з вбудованого мікрофона телефона, а назва
+     * в журналі та сама. Тут — те, що система робить насправді:
+     *   • активні записи ЦЬОГО застосунку (AudioManager.getActiveRecordingConfigurations):
+     *     з якого пристрою йде запис, яке джерело, частота на клієнті й на
+     *     пристрої (8000 на пристрої = вузькосмуговий SCO-канал CVSD, 16000 =
+     *     широкосмуговий mSBC);
+     *   • пристрій розмови (Android 12+, setCommunicationDevice) і режим
+     *     AudioManager;
+     *   • стан SCO за старим API (isBluetoothScoOn) — на Android 12+ він може
+     *     бути false навіть коли маршрут через пристрій розмови працює.
+     */
+    fun routeState(context: Context): Map<String, Any?> {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val comm: AudioDeviceInfo? =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.communicationDevice else null
+        val recordings: List<Map<String, Any?>> =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    am.activeRecordingConfigurations.map { cfg ->
+                        val dev = cfg.audioDevice
+                        mapOf(
+                            "source" to sourceLabel(cfg.clientAudioSource),
+                            "device" to dev?.let { deviceLabel(it) },
+                            "bucket" to dev?.let { bucketFor(it.type) },
+                            "clientSampleRate" to cfg.clientFormat?.sampleRate,
+                            "deviceSampleRate" to cfg.format?.sampleRate
+                        )
+                    }
+                } catch (_: Throwable) {
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+        @Suppress("DEPRECATION")
+        val scoOn = try { am.isBluetoothScoOn } catch (_: Throwable) { false }
+        return mapOf(
+            "mode" to modeLabel(am.mode),
+            "scoOn" to scoOn,
+            "commDevice" to comm?.let { deviceLabel(it) },
+            "commBucket" to comm?.let { bucketFor(it.type) },
+            "recordings" to recordings
+        )
+    }
+
+    private fun sourceLabel(source: Int): String = when (source) {
+        MediaRecorder.AudioSource.DEFAULT -> "default"
+        MediaRecorder.AudioSource.MIC -> "mic"
+        MediaRecorder.AudioSource.VOICE_RECOGNITION -> "voice_recognition"
+        MediaRecorder.AudioSource.VOICE_COMMUNICATION -> "voice_communication"
+        MediaRecorder.AudioSource.CAMCORDER -> "camcorder"
+        MediaRecorder.AudioSource.UNPROCESSED -> "unprocessed"
+        else -> "source_$source"
+    }
+
+    private fun modeLabel(mode: Int): String = when (mode) {
+        AudioManager.MODE_NORMAL -> "normal"
+        AudioManager.MODE_RINGTONE -> "ringtone"
+        AudioManager.MODE_IN_CALL -> "in_call"
+        AudioManager.MODE_IN_COMMUNICATION -> "in_communication"
+        else -> "mode_$mode"
     }
 
     /** "wired" | "bluetooth" | "builtin" | "other" — для сортування за пріоритетом. */

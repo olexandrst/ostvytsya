@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:record/record.dart';
@@ -22,6 +23,14 @@ import 'wake_matcher.dart';
 /// (котра керує мікрофоном під час самого квесту). Ніколи не працюють
 /// одночасно: [waitForWake] завжди повністю зупиняє свій запис перед тим,
 /// як повернути результат.
+///
+/// Bluetooth-мікрофон (гарнітура/спікерфон, напр. Jabra Speak2): голосовий
+/// канал (SCO) піднімає САМ застосунок — той самий CommunicationRouter, що
+/// тримає канал під час квесту, — а не плагін `record`. Плагін лишається
+/// запасним варіантом: якщо наш канал не піднявся або перевірка маршруту
+/// показала, що запис іде не з гарнітури, слухання перезапускається з
+/// керуванням каналом від плагіна. Що б не сталося — у журналі видно, з
+/// якого пристрою насправді йде запис і який рівень сигналу.
 class WakeGateService {
   static const sampleRate = 16000;
 
@@ -29,6 +38,13 @@ class WakeGateService {
   /// вважати мікрофон/розпізнавач непрацездатним і повідомити про помилку,
   /// а не мовчки "слухати" вічно без жодного результату.
   static const _maxConsecutiveErrors = 50;
+
+  /// Через скільки після старту запису перевіряти справжній маршрут: за цей
+  /// час гарнітура встигає підняти канал, а система — застосувати його.
+  static const _routeCheckDelay = Duration(milliseconds: 2500);
+
+  /// Як часто писати в журнал рівень сигналу мікрофона.
+  static const _levelReportEvery = Duration(seconds: 15);
 
   final AudioRecorder _recorder = AudioRecorder();
   final AudioDeviceService _deviceService = AudioDeviceService();
@@ -131,15 +147,47 @@ class WakeGateService {
     var lastFinalAt = DateTime.now();
     var currentDevice = await _resolveInputDevice();
 
+    // Покоління потоку запису: перевірка маршруту, що спізнилась до вже
+    // перезапущеного потоку, не має нічого робити.
+    var streamGen = 0;
+    // Наш голосовий канал Bluetooth зараз піднято (треба зняти при зупинці).
+    var scoOwned = false;
+    // Власний канал не спрацював (запис ішов не з гарнітури) — далі канал
+    // піднімає плагін запису, як це було до цієї зміни.
+    var pluginScoFallback = false;
+    final meter = _LevelMeter();
+    late Future<void> Function(int gen, bool wantBluetooth, bool ownSco)
+    verifyRoute;
+
     Future<void> startStream() async {
+      final gen = ++streamGen;
       final device = currentDevice;
+      final wantBluetooth = device?.bucket == 'bluetooth';
+      var ownSco = false;
+      if (wantBluetooth && !pluginScoFallback) {
+        // Один господар каналу на весь застосунок (CommunicationRouter):
+        // під час квесту канал і так тримаємо ми, тож і в очікуванні
+        // кодового слова піднімаємо його самі, а не довіряємо плагіну.
+        ownSco = await _deviceService.startSco();
+        _diagCtrl.add(
+          ownSco
+              ? 'Bluetooth-мікрофон: голосовий канал підняв застосунок.'
+              : 'Bluetooth-мікрофон: застосунок не зміг підняти голосовий '
+                    'канал — доручаю його плагіну запису.',
+        );
+        if (ownSco) {
+          await Future<void>.delayed(AudioDeviceService.scoSettleDelay);
+        }
+      }
+      scoOwned = ownSco;
       // Раніше тут не було видно взагалі нічого про вибір мікрофона — при
       // мовчазній тиші неможливо було відрізнити «слухаю не той пристрій»
       // від «розпізнавання не працює».
       _diagCtrl.add(
         device == null
             ? 'Слухаю мікрофон за замовчуванням.'
-            : 'Слухаю мікрофон «${device.label}».',
+            : 'Слухаю мікрофон «${device.label}»'
+                  '${wantBluetooth ? (ownSco ? ' (канал наш)' : ' (канал від плагіна)') : ''}.',
       );
       if (wakeOnVoice) {
         _diagCtrl.add('Прокидаюсь від будь-якого голосу — без кодового слова.');
@@ -155,17 +203,28 @@ class WakeGateService {
           // присутня у списку і як BLE/A2DP, тож ми легко передавали «не
           // ту» її іпостась. У такому разі плагін не просто не піднімає
           // канал, а РВЕ вже піднятий — і мікрофон гарнітури віддає тишу.
-          // З null плагін сам піднімає SCO, ЧЕКАЄ на підтвердження
-          // з'єднання і лише тоді починає запис, а Android скеровує
-          // захоплення саме з гарнітури.
-          device: (device == null || device.bucket == 'bluetooth')
+          // З null система скеровує захоплення за активним каналом.
+          device: (device == null || wantBluetooth)
               ? null
               : InputDevice(id: device.id, label: device.label),
-          androidConfig: const AndroidRecordConfig(manageBluetooth: true),
+          androidConfig: AndroidRecordConfig(
+            // Канал тримаємо ми — плагін до нього не торкається. Лише як
+            // запасний варіант (наш канал не піднявся) — керує плагін, як
+            // було раніше.
+            manageBluetooth: wantBluetooth && !ownSco,
+            // Із нашим каналом запис має бути «клієнтом розмови»
+            // (VOICE_COMMUNICATION) — саме такі клієнти система скеровує на
+            // пристрій розмови (setCommunicationDevice); так само працює
+            // мікрофон під час квесту.
+            audioSource: ownSco
+                ? AndroidAudioSource.voiceCommunication
+                : AndroidAudioSource.defaultSource,
+          ),
         ),
       );
       sub = stream.listen((chunk) async {
         if (completer.isCompleted) return;
+        meter.add(chunk);
         try {
           final ready = await recognizer.acceptWaveformBytes(chunk);
           final raw = ready
@@ -213,9 +272,89 @@ class WakeGateService {
           }
         }
       });
+      unawaited(verifyRoute(gen, wantBluetooth, ownSco));
     }
 
-    await startStream();
+    /// Зупинити поточний потік (і наш канал, якщо піднімали) і запустити
+    /// заново з поточним [currentDevice] / стратегією каналу.
+    Future<void> restartStream() async {
+      await sub?.cancel();
+      sub = null;
+      try {
+        await _recorder.stop();
+      } catch (_) {}
+      if (scoOwned) {
+        scoOwned = false;
+        await _deviceService.stopSco();
+      }
+      if (completer.isCompleted) return;
+      try {
+        await startStream();
+      } catch (e) {
+        // Раніше збій тут лишав очікування без мікрофона НАЗАВЖДИ (виняток
+        // в асинхронному слухачі нікуди не потрапляв). Віддаємо помилку
+        // контролеру — він перезапустить слухання після паузи.
+        _diagCtrl.add('Не вдалося перезапустити мікрофон: $e');
+        if (!completer.isCompleted) {
+          completer.completeError(Exception('Мікрофон після перезапуску: $e'));
+        }
+      }
+    }
+
+    // Через кілька секунд після старту — що система робить НАСПРАВДІ: з
+    // якого пристрою пише AudioRecord. Обрано Bluetooth, а запис іде з
+    // телефона — канал не піднявся: один раз перезапускаємо слухання, щоб
+    // канал підняв плагін (стара поведінка); не допомогло — пишемо в журнал
+    // прямим текстом, що кодове слово слухає не той мікрофон.
+    verifyRoute = (gen, wantBluetooth, ownSco) async {
+      await Future<void>.delayed(_routeCheckDelay);
+      if (completer.isCompleted || gen != streamGen) return;
+      final state = await _deviceService.routeState();
+      if (state == null || completer.isCompleted || gen != streamGen) return;
+      _diagCtrl.add('Маршрут звуку: ${state.describe(sampleRate: sampleRate)}');
+      if (!wantBluetooth) return;
+      final rec = state.recordingAt(sampleRate);
+      final actualBucket = rec?.bucket;
+      if (rec == null || actualBucket == null || actualBucket == 'bluetooth') {
+        return;
+      }
+      final from = rec.device ?? 'невідомого пристрою';
+      if (ownSco && !pluginScoFallback) {
+        pluginScoFallback = true;
+        _diagCtrl.add(
+          '⚠️ Обрано Bluetooth-мікрофон, а запис іде з «$from» — '
+          'перезапускаю слухання, канал підніме плагін запису.',
+        );
+        await restartStream();
+      } else {
+        _diagCtrl.add(
+          '⚠️ Обрано Bluetooth-мікрофон «${currentDevice?.label ?? 'Bluetooth'}», '
+          'а запис іде з «$from»: голосовий канал не піднявся — кодове слово '
+          'слухає НЕ той мікрофон. Перевір Bluetooth-з\'єднання гарнітури '
+          '(профіль «Дзвінки») і дозвіл «Пристрої поблизу».',
+        );
+      }
+    };
+
+    try {
+      await startStream();
+    } catch (_) {
+      // Мікрофон не стартував — не лишаємо піднятий канал гарнітури.
+      if (scoOwned) {
+        scoOwned = false;
+        await _deviceService.stopSco();
+      }
+      rethrow;
+    }
+
+    // Рівень сигналу — щоб у журналі було видно, чи мікрофон узагалі щось
+    // чує, коли діти говорять (тиша = не той мікрофон або він вимкнений).
+    final levelTimer = Timer.periodic(_levelReportEvery, (_) {
+      if (completer.isCompleted) return;
+      _diagCtrl.add(
+        'Мікрофон за ${_levelReportEvery.inSeconds} с: ${meter.reportAndReset()}',
+      );
+    });
 
     // Поки чекаємо кодове слово (могло бути й довго), реагуємо на
     // під'єднання/від'єднання пристроїв: якщо найкращий доступний мікрофон
@@ -226,8 +365,8 @@ class WakeGateService {
     ) async {
       if (completer.isCompleted) return;
       final newDevice = await _resolveInputDevice();
-      // Поки гарнітура на місці, лишаємось на ній: підняття SCO самим
-      // плагіном перебудовує список входів, і без цієї умови автопідбір
+      // Поки гарнітура на місці, лишаємось на ній: підняття голосового
+      // каналу перебудовує список входів, і без цієї умови автопідбір
       // устигав перескочити на вбудований мікрофон. Якщо ж bluetooth зник
       // зі списку зовсім — гарнітуру справді від'єднали, і перехід на
       // вбудований мікрофон правильний.
@@ -240,24 +379,9 @@ class WakeGateService {
         if (stillThere != null) return;
       }
       currentDevice = newDevice;
-      await sub?.cancel();
-      try {
-        await _recorder.stop();
-      } catch (_) {}
-      if (completer.isCompleted) return;
-      try {
-        await startStream();
-      } catch (e) {
-        // Раніше збій тут лишав очікування без мікрофона НАЗАВЖДИ (виняток
-        // в асинхронному слухачі нікуди не потрапляв). Віддаємо помилку
-        // контролеру — він перезапустить слухання після паузи.
-        _diagCtrl.add('Не вдалося перезапустити мікрофон: $e');
-        if (!completer.isCompleted) {
-          completer.completeError(
-            Exception('Мікрофон після зміни пристрою: $e'),
-          );
-        }
-      }
+      // Новий пристрій — знову спершу пробуємо власний канал.
+      pluginScoFallback = false;
+      await restartStream();
     });
 
     final stopTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
@@ -269,11 +393,18 @@ class WakeGateService {
       return result;
     } finally {
       stopTimer.cancel();
+      levelTimer.cancel();
       await deviceChangeSub.cancel();
       await sub?.cancel();
       try {
         await _recorder.stop();
       } catch (_) {}
+      if (scoOwned) {
+        // Знімаємо завжди: квест підніме канал сам (CommunicationRouter
+        // один на застосунок), а очікуванню він більше не потрібен.
+        scoOwned = false;
+        await _deviceService.stopSco();
+      }
     }
   }
 
@@ -322,5 +453,49 @@ class WakeGateService {
     } catch (_) {}
     _recognizer = null;
     await _diagCtrl.close();
+  }
+}
+
+/// Рівень сигналу мікрофона (PCM16 моно) за проміжок: пік і середнє (RMS)
+/// у дБ відносно повної шкали. Дешево: один прохід по семплах шматка.
+class _LevelMeter {
+  int _peak = 0;
+  double _sumSquares = 0;
+  int _samples = 0;
+
+  void add(Uint8List chunk) {
+    final data = ByteData.sublistView(chunk);
+    final n = data.lengthInBytes ~/ 2;
+    for (var i = 0; i < n; i++) {
+      final s = data.getInt16(i * 2, Endian.little);
+      final a = s < 0 ? -s : s;
+      if (a > _peak) _peak = a;
+      _sumSquares += s * s;
+    }
+    _samples += n;
+  }
+
+  static String _db(double ratio) {
+    if (ratio <= 0) return '−∞ дБ';
+    return '${(20 * math.log(ratio) / math.ln10).toStringAsFixed(0)} дБ';
+  }
+
+  /// Один рядок для журналу; лічильники обнуляються.
+  String reportAndReset() {
+    if (_samples == 0) {
+      return 'жодного шматка звуку — мікрофон не віддає даних';
+    }
+    final peak = _peak / 32768.0;
+    final rms = math.sqrt(_sumSquares / _samples) / 32768.0;
+    final buf = StringBuffer('пік ${_db(peak)}, середній ${_db(rms)}');
+    if (peak < 0.002) {
+      buf.write(' — практично тиша: мікрофон нічого не чує');
+    } else if (peak > 0.98) {
+      buf.write(' — перевантаження');
+    }
+    _peak = 0;
+    _sumSquares = 0;
+    _samples = 0;
+    return buf.toString();
   }
 }

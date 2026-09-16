@@ -21,6 +21,81 @@ class AudioDevice {
   int get hashCode => id.hashCode;
 }
 
+/// Один активний запис цього застосунку — з якого пристрою він насправді
+/// йде (AudioRecordingConfiguration з Android).
+class ActiveRecording {
+  final String source;
+  final String? device;
+  final String? bucket;
+  final int? clientSampleRate;
+  final int? deviceSampleRate;
+
+  const ActiveRecording({
+    required this.source,
+    this.device,
+    this.bucket,
+    this.clientSampleRate,
+    this.deviceSampleRate,
+  });
+}
+
+/// Справжній стан маршрутизації звуку (AudioDeviceUtils.routeState): не
+/// «який пристрій ми ОБРАЛИ», а з якого система РЕАЛЬНО пише звук, чи
+/// піднято голосовий канал Bluetooth, який режим AudioManager.
+class AudioRouteState {
+  final String mode;
+  final bool scoOn;
+  final String? commDevice;
+  final String? commBucket;
+  final List<ActiveRecording> recordings;
+
+  const AudioRouteState({
+    required this.mode,
+    required this.scoOn,
+    this.commDevice,
+    this.commBucket,
+    this.recordings = const [],
+  });
+
+  /// Запис, що найімовірніше наш (за частотою клієнта), або перший.
+  ActiveRecording? recordingAt(int sampleRate) {
+    for (final r in recordings) {
+      if (r.clientSampleRate == sampleRate) return r;
+    }
+    return recordings.isEmpty ? null : recordings.first;
+  }
+
+  /// Один рядок для журналу.
+  String describe({int? sampleRate}) {
+    final rec = sampleRate == null
+        ? (recordings.isEmpty ? null : recordings.first)
+        : recordingAt(sampleRate);
+    final buf = StringBuffer();
+    if (rec == null) {
+      buf.write('активного запису не видно');
+    } else {
+      buf.write('запис іде з «${rec.device ?? 'невідомо'}»');
+      if (rec.bucket != null) buf.write(' [${rec.bucket}]');
+      buf.write(', джерело ${rec.source}');
+      if (rec.clientSampleRate != null) {
+        buf.write(', ${rec.clientSampleRate} Гц');
+      }
+      if (rec.deviceSampleRate != null &&
+          rec.deviceSampleRate != rec.clientSampleRate) {
+        buf.write(' (пристрій ${rec.deviceSampleRate} Гц');
+        if (rec.deviceSampleRate == 8000) {
+          buf.write(', вузькосмуговий канал');
+        }
+        buf.write(')');
+      }
+    }
+    buf.write(' · пристрій розмови: ');
+    buf.write(commDevice == null ? 'не задано' : '«$commDevice»');
+    buf.write(' · режим $mode · SCO (старий API): ${scoOn ? 'увімкнено' : 'вимкнено'}');
+    return buf.toString();
+  }
+}
+
 /// Перелік аудіо-пристроїв входу/виходу, автоматичний вибір за пріоритетом
 /// (провідний → bluetooth → вбудований) і живі сповіщення про
 /// під'єднання/від'єднання — усе через нативний Android AudioManager
@@ -68,6 +143,44 @@ class AudioDeviceService {
           .toList();
     } on PlatformException {
       return const [];
+    }
+  }
+
+  /// Справжній стан маршрутизації звуку (див. [AudioRouteState]); null, якщо
+  /// нативний бік не відповів.
+  Future<AudioRouteState?> routeState() async {
+    try {
+      final raw = await _channel.invokeMapMethod<String, Object?>(
+        'audioRouteState',
+      );
+      if (raw == null) return null;
+      final recs = <ActiveRecording>[];
+      final list = raw['recordings'];
+      if (list is List) {
+        for (final e in list) {
+          if (e is! Map) continue;
+          recs.add(
+            ActiveRecording(
+              source: (e['source'] as String?) ?? 'невідомо',
+              device: e['device'] as String?,
+              bucket: e['bucket'] as String?,
+              clientSampleRate: (e['clientSampleRate'] as num?)?.toInt(),
+              deviceSampleRate: (e['deviceSampleRate'] as num?)?.toInt(),
+            ),
+          );
+        }
+      }
+      return AudioRouteState(
+        mode: (raw['mode'] as String?) ?? 'невідомо',
+        scoOn: raw['scoOn'] == true,
+        commDevice: raw['commDevice'] as String?,
+        commBucket: raw['commBucket'] as String?,
+        recordings: recs,
+      );
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
     }
   }
 

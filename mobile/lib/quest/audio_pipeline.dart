@@ -171,6 +171,33 @@ class AudioPipeline {
       ),
     );
     _micSub = micStream.listen((data) => _onMic?.call(data));
+    // Один раз за квест — з якого пристрою система НАСПРАВДІ пише звук
+    // (назва обраного пристрою вище — лише намір).
+    if (!_routeLogged) {
+      _routeLogged = true;
+      unawaited(_logRouteLater());
+    }
+  }
+
+  bool _routeLogged = false;
+
+  Future<void> _logRouteLater() async {
+    await Future<void>.delayed(const Duration(milliseconds: 2500));
+    if (!_recorderRunning) return;
+    final state = await _deviceService.routeState();
+    if (state == null || !_recorderRunning) return;
+    final rate = _inputSampleRate ?? 0;
+    _diagCtrl.add('Маршрут звуку (квест): ${state.describe(sampleRate: rate)}');
+    if (_resolvedInputDevice?.bucket == 'bluetooth') {
+      final rec = state.recordingAt(rate);
+      if (rec != null && rec.bucket != null && rec.bucket != 'bluetooth') {
+        _diagCtrl.add(
+          '⚠️ Мікрофон квесту: обрано Bluetooth, а запис іде з '
+          '«${rec.device ?? 'невідомого пристрою'}» — голосовий канал не '
+          'піднявся, персонаж чує телефон, а не гарнітуру.',
+        );
+      }
+    }
   }
 
   String _bucketLabel(String bucket) {
@@ -336,6 +363,7 @@ class AudioPipeline {
     _pendingChunks.clear();
     _inputSampleRate = inputSampleRate;
     _onMic = onMic;
+    _routeLogged = false;
 
     await _resolveAudioDevices();
     await _deviceChangeSub?.cancel();

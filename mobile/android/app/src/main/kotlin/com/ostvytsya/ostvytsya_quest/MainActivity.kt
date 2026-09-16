@@ -160,6 +160,11 @@ class MainActivity : FlutterActivity() {
                         val direction = call.argument<String>("direction") ?: "input"
                         result.success(AudioDeviceUtils.listDevices(applicationContext, direction))
                     }
+                    "audioRouteState" -> {
+                        // Справжній маршрут запису (з якого пристрою пише
+                        // AudioRecord, чи піднято голосовий канал) — для журналу.
+                        result.success(AudioDeviceUtils.routeState(applicationContext))
+                    }
                     "backupSettings" -> {
                         val json = call.argument<String>("json")
                         val blob = if (json == null) null
