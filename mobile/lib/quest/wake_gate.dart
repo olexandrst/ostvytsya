@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -10,6 +11,7 @@ import '../constants.dart';
 import '../services/audio_device_service.dart';
 import '../services/recordings_store.dart';
 import '../services/settings_store.dart';
+import 'transcript_utils.dart';
 import 'wake_matcher.dart';
 
 /// Локальне (офлайн, без мережі) очікування кодового слова персонажа —
@@ -108,9 +110,152 @@ class WakeGateService {
   static Future<Recognizer> _loadShared() async {
     final vosk = VoskFlutterPlugin.instance();
     final modelPath = await ModelLoader().loadFromNetwork(kVoskModelUrl);
+    _modelPath = modelPath;
     final model = await vosk.createModel(modelPath);
     return vosk.createRecognizer(model: model, sampleRate: sampleRate);
   }
+
+  // ── Граматика кодового слова ──────────────────────────────────────────
+  //
+  // Повний словник Vosk із мовною моделлю для кодового слова шкідливий: коли
+  // звук неідеальний (Bluetooth-канал, відстань, шум), модель віддає перевагу
+  // ЧАСТИМ словам, і «князь» стає «наразі» чи «для». Тому на час очікування
+  // обмежуємо розпізнавач граматикою лише з кодових слів плюс [unk]: усе, що
+  // не схоже на кодове слово, стає «[unk]», а те, що схоже, — самим словом.
+  // Це стандартний спосіб ловити ключові слова у Vosk. Працює лише з моделлю
+  // з динамічним графом (graph/HCLr.fst + Gr.fst) і лише для слів, які є у
+  // словнику моделі (graph/words.txt); інакше — повний словник і нечіткий
+  // збіг, як було.
+
+  static String? _modelPath;
+  static bool? _grammarSupported;
+  static final Map<String, bool> _vocabCache = {};
+
+  static Future<bool> _modelSupportsGrammar() async {
+    final cached = _grammarSupported;
+    if (cached != null) return cached;
+    final p = _modelPath;
+    if (p == null) return false;
+    var ok = false;
+    try {
+      ok =
+          await File('$p/graph/HCLr.fst').exists() &&
+          await File('$p/graph/Gr.fst').exists();
+    } catch (_) {
+      ok = false;
+    }
+    _grammarSupported = ok;
+    return ok;
+  }
+
+  /// Які з [words] є у словнику моделі. Немає файла словника — вважаємо,
+  /// що всі (Vosk сам пропустить невідомі з попередженням у logcat).
+  static Future<Set<String>> _inVocabulary(Iterable<String> words) async {
+    final result = <String>{};
+    final pending = <String>{};
+    for (final w in words) {
+      final known = _vocabCache[w];
+      if (known == null) {
+        pending.add(w);
+      } else if (known) {
+        result.add(w);
+      }
+    }
+    if (pending.isEmpty) return result;
+    final p = _modelPath;
+    final file = p == null ? null : File('$p/graph/words.txt');
+    try {
+      if (file == null || !await file.exists()) {
+        result.addAll(pending);
+        return result;
+      }
+      final found = <String>{};
+      final lines = file
+          .openRead()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+      await for (final line in lines) {
+        final sp = line.indexOf(' ');
+        final w = sp < 0 ? line : line.substring(0, sp);
+        if (pending.contains(w)) {
+          found.add(w);
+          if (found.length == pending.length) break;
+        }
+      }
+      for (final w in pending) {
+        _vocabCache[w] = found.contains(w);
+      }
+      result.addAll(found);
+    } catch (_) {
+      // Не змогли прочитати словник — не блокуємо граматику через це.
+      result.addAll(pending);
+    }
+    return result;
+  }
+
+  /// Налаштувати розпізнавач під це очікування: граматика з кодових слів
+  /// (якщо модель і словник дозволяють) або повний словник. Повертає true,
+  /// якщо граматику ввімкнено.
+  Future<bool> _configureGrammar(
+    Recognizer recognizer,
+    List<String> wakeWords, {
+    required bool wakeOnVoice,
+  }) async {
+    Future<void> fullVocabulary(String why) async {
+      try {
+        await recognizer.setGrammar(const []);
+      } catch (_) {
+        // Модель зі статичним графом — і так повний словник.
+      }
+      _diagCtrl.add('Розпізнавач: повний словник ($why).');
+    }
+
+    if (wakeOnVoice) {
+      await fullVocabulary('прокидання від будь-якого голосу');
+      return false;
+    }
+    if (!await _modelSupportsGrammar()) {
+      await fullVocabulary('модель без динамічного графа, граматика недоступна');
+      return false;
+    }
+    final candidates = <String>{
+      for (final w in wakeWords)
+        normalizeText(w).trim().replaceAll(RegExp(r'\s+'), ' '),
+    }..remove('');
+    final tokens = candidates.expand((w) => w.split(' ')).toSet();
+    final known = await _inVocabulary(tokens);
+    final missing = tokens.difference(known);
+    if (missing.isNotEmpty) {
+      _diagCtrl.add(
+        'Поза словником моделі (граматика їх не побачить): '
+        '${missing.map((w) => '«$w»').join(', ')}.',
+      );
+    }
+    final usable = candidates
+        .where((w) => w.split(' ').every(known.contains))
+        .toList();
+    if (usable.isEmpty) {
+      await fullVocabulary(
+        'жодного кодового слова немає у словнику моделі, працює нечіткий збіг',
+      );
+      return false;
+    }
+    try {
+      await recognizer.setGrammar([...usable, '[unk]']);
+    } catch (e) {
+      await fullVocabulary('граматику не прийнято: $e');
+      return false;
+    }
+    _diagCtrl.add(
+      'Розпізнавач: граматика лише з кодових слів '
+      '(${usable.map((w) => '«$w»').join(', ')}); усе інше чується як [unk].',
+    );
+    return true;
+  }
+
+  /// Прибрати службові «[unk]» з тексту розпізнавача (граматика).
+  static String _stripUnk(String text) =>
+      text.replaceAll('[unk]', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
 
   Future<AudioDevice?> _resolveInputDevice() async {
     try {
@@ -133,6 +278,12 @@ class WakeGateService {
   }) async {
     await ensureReady();
     final recognizer = _recognizer!;
+    // Спершу граматика (перебудовує граф розпізнавача), потім чистий стан.
+    final grammarActive = await _configureGrammar(
+      recognizer,
+      wakeWords,
+      wakeOnVoice: wakeOnVoice,
+    );
     await recognizer.reset();
 
     // Поріг нечіткого збігу — з налаштувань (Налаштування → Кодове слово):
@@ -273,7 +424,10 @@ class WakeGateService {
           final raw = ready
               ? await recognizer.getResult()
               : await recognizer.getPartialResult();
-          final text = _extractText(raw, ready);
+          final rawText = _extractText(raw, ready);
+          // У режимі граматики все, що не кодове слово, — «[unk]»: у журнал
+          // і на збіг ідуть лише справжні слова.
+          final text = grammarActive ? _stripUnk(rawText) : rawText;
           consecutiveErrors = 0;
           if (text.isNotEmpty && text != lastPartial) {
             lastPartial = text;
@@ -291,7 +445,7 @@ class WakeGateService {
           }
           if (ready) {
             lastFinalAt = DateTime.now();
-          } else if (_needsReset(text, lastFinalAt)) {
+          } else if (_needsReset(rawText, lastFinalAt)) {
             // Термінал слухає ГОДИНАМИ. У шумі парку (вітер, гурт дітей)
             // розпізнавач може довго не бачити кінця фрази й тягнути одне
             // нескінченне висловлювання — його внутрішній стан і час
