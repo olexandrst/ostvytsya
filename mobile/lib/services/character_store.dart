@@ -18,6 +18,7 @@ class CharacterStore {
     'vodyanyk',
     'povitrulya',
     'povitrulya-nova',
+    'povitrulya-stina',
     'povitrulya-18',
     'derevo',
     'vitroplav',
@@ -126,13 +127,14 @@ class CharacterStore {
       }
     }
     // Порядок на головному екрані: спершу персонажі парку в потрібній черзі
-    // (Повітруля, поруч її спрощена версія, Дерево, Домовичок, далі їхні
+    // (Повітруля СТІНА, Домовичок, Дерево, Повітруля НОВА, Повітруля, далі
     // дорослі версії), далі решта за назвою.
     const pinned = [
-      'povitrulya',
-      'povitrulya-nova',
-      'derevo',
+      'povitrulya-stina',
       'domovychok',
+      'derevo',
+      'povitrulya-nova',
+      'povitrulya',
       'povitrulya-18',
       'derevo-18',
       'domovychok-18',

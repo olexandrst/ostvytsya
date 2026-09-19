@@ -1,12 +1,18 @@
 name: Mobile — збірка Android APK
 
+# Збірки йдуть з гілки mid-quest (робоча гілка застосунку). Інші гілки
+# збираються лише вручну (Run workflow).
 on:
   workflow_dispatch: {}
   push:
+    branches:
+      - mid-quest
     paths:
       - "mobile/**"
       - ".github/workflows/mobile-build.yml"
   pull_request:
+    branches:
+      - mid-quest
     paths:
       - "mobile/**"
       - ".github/workflows/mobile-build.yml"
