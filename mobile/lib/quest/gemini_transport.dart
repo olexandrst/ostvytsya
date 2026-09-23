@@ -329,6 +329,10 @@ class GeminiTransport implements QuestTransport {
   @override
   void sendText(String text) {
     if (!_setupComplete) return;
+    // Обхідний шлях нижче — ЛИШЕ для gemini-3.1-flash-live-preview (вада тієї
+    // конкретної моделі, див. constants.dart::kGeminiLiveModel). На 3.8 і
+    // будь-якій іншій моделі client_content працює штатно й генерує голос,
+    // тож ідемо у звичайну гілку нижче.
     if (kGeminiLiveModel.contains('3.1')) {
       // Для gemini-3.1-flash-live-preview client_content офіційно
       // підтримується лише для "засівання" початкового контексту й НЕ
@@ -341,6 +345,12 @@ class GeminiTransport implements QuestTransport {
       // достеменно той самий шлях, яким генерується голос під час
       // звичайного ходу з мікрофону. Якщо цей хід теж пройде без аудіо —
       // про це подбає загальний механізм відновлення в _onTurnComplete().
+      //
+      // ‼️ Цей прийом НЕ можна використовувати на 3.8: та модель здатна
+      // зависнути на ході, якщо в realtime_input.audio прийде точна цифрова
+      // тиша (нуль-семпли) під час автоматичного VAD — саме такий буфер тут
+      // і формує _sendSilentAudioPrimer(). Для 3.1 це безпечно (підтверджено
+      // на пристрої), для 3.8 — навмисно недосяжно (умова вище).
       _sendSilentAudioPrimer();
       _send({
         'realtime_input': {'text': text},
@@ -366,6 +376,10 @@ class GeminiTransport implements QuestTransport {
   /// живий голос гравця і який стабільно генерує аудіо-відповідь. Ціль —
   /// активувати аудіо-шлях моделі ще до текстового привітання (обхід
   /// холодного старту gemini-3.1-flash-live-preview).
+  ///
+  /// ‼️ Викликається ЛИШЕ з гілок під `kGeminiLiveModel.contains('3.1')` —
+  /// на 3.8 точний нуль-PCM ризикує зависанням ходу (див. коментар вище й
+  /// constants.dart), тож цей метод для 3.8 не викликається взагалі.
   void _sendSilentAudioPrimer() {
     const durationMs = 400;
     final sampleCount = (inputSampleRate * durationMs / 1000).round();
@@ -382,6 +396,13 @@ class GeminiTransport implements QuestTransport {
   /// просимо модель озвучити ту саму репліку ще раз (до
   /// [_maxRecoveryAttempts] спроб поспіль, далі здаємось, щоб не
   /// зациклитись, якщо модель геть не хоче говорити).
+  ///
+  /// Це відновлення (і виклик _sendSilentAudioPrimer у ньому) теж УВІМКНЕНО
+  /// ЛИШЕ для 3.1 (`kGeminiLiveModel.contains('3.1')` нижче) — вада
+  /// специфічна для тієї моделі. На 3.8 гілку не заходимо: якщо колись
+  /// з'явиться підтверджений випадок мовчазного ходу саме на 3.8, для нього
+  /// знадобиться ОКРЕМИЙ прийом (без нуль-PCM — див. constants.dart), а не
+  /// просте розширення цієї умови.
   void _onTurnComplete() {
     final expectedBytes =
         (_turnTextChars / _fastCharsPerSecond) * outputSampleRate * 2;

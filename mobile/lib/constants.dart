@@ -56,23 +56,35 @@ const double kDefaultSpeechSpeed = 1.0;
 const String kDefaultWinWord = 'Перемога';
 
 const String kOpenAiRealtimeModel = 'gpt-realtime-2.1-mini';
-// Gemini 3.1 Flash Live (preview) — наступник gemini-2.5-flash-native-audio.
-// Той самий протокол BidiGenerateContent (v1beta) і та сама палітра з 30
-// голосів (Charon/Kore/Orus/Puck/Enceladus тощо лишаються чинними). Важлива
-// відмінність: для 3.1 client_content офіційно підтримується лише для
-// "засівання" контексту й НЕ генерує аудіо — тому GeminiTransport шле
-// привітання через realtime_input.text саме для цієї моделі
-// (див. gemini_transport.dart::_sendGreeting).
-const String kGeminiLiveModel = 'gemini-3.1-flash-live-preview';
+// Gemini 3.8 Live (генерально доступна, з 15 вересня 2026) — наступник
+// gemini-3.1-flash-live-preview. Той самий протокол BidiGenerateContent
+// (v1beta) і та сама палітра з 30 голосів (Charon/Kore/Orus/Puck/Enceladus
+// тощо лишаються чинними). Обхідні шляхи для двох підтверджених вад САМЕ
+// 3.1 (client_content без аудіо; хід озвучується частково чи взагалі мовчки)
+// у GeminiTransport лишені в коді, але вимкнені для будь-якої іншої моделі
+// (перевірка `kGeminiLiveModel.contains('3.1')`) — 3.8 ними не страждає, тож
+// привітання й службові сигнали йдуть звичайним client_content, а механізм
+// "озвуч репліку ще раз" не спрацьовує без потреби.
+//
+// ‼️ У 3.8 є ІНША підтверджена вада: якщо клієнт шле в realtime_input.audio
+// цифрову тишу (семпли, що дорівнюють РІВНО нулю) під час автоматичного VAD,
+// сервер може не побачити кінця ходу гравця, і хід зависає без відповіді.
+// Живий мікрофон завжди має шумовий поріг і під це не підпадає — ризикований
+// був лише _sendSilentAudioPrimer() (шле точний нуль-PCM), а він теж
+// активний тільки для 3.1 (contains('3.1')) і для 3.8 не викликається.
+// Якщо колись знадобиться штучна "тиша" для 3.8 — генеруй малий шум
+// (± кілька молодших бітів), а не точний нуль.
+const String kGeminiLiveModel = 'gemini-3.8-live';
 
 /// Адреса веб-панелі за замовчуванням (Render, див. render.yaml): туди йдуть
 /// статуси терміналів, синхронізація персонажів між телефонами й перемоги.
 /// Користувач може замінити її в налаштуваннях; порожнє поле = ця адреса.
 const String kDefaultServerUrl = 'https://ostvytsya.onrender.com';
 
-/// Ціни Gemini 3.1 Flash Live, USD за 1 млн токенів (ai.google.dev/pricing,
-/// вересень 2026) — лише для ОЦІНКИ вартості в журналі сесії («Токени
-/// ходу …»); справжній рахунок виставляє Google. Оновлюй разом із моделлю.
+/// Ціни Gemini 3.8 Live, USD за 1 млн токенів (ai.google.dev/pricing,
+/// вересень 2026 — ті самі ставки, що були у 3.1 Flash Live) — лише для
+/// ОЦІНКИ вартості в журналі сесії («Токени ходу …»); справжній рахунок
+/// виставляє Google. Оновлюй разом із моделлю.
 const double kGeminiAudioInputUsdPer1M = 3.0;
 const double kGeminiTextInputUsdPer1M = 0.75;
 const double kGeminiAudioOutputUsdPer1M = 12.0;
