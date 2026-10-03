@@ -218,6 +218,13 @@ class QuestController {
           'голос персонажа ${agentS}с.${err == null ? '' : ' Помилка: $err'}',
         );
       }
+      if (audio.micRestarts > 0) {
+        _say(
+          'system',
+          'Мікрофон за спробу перезапускався сторожем: ${audio.micRestarts} '
+          'раз(и) — потік із мікрофона переставав віддавати дані.',
+        );
+      }
       final durationS = DateTime.now().difference(startedAt).inSeconds;
       if (outcome == QuestOutcome.won) {
         // Перемога команди — подія для панелі. Асинхронно, збоку від
@@ -389,6 +396,7 @@ class QuestController {
     // застряг остаточно, завершуємо спробу, щоб термінал не мовчав годину.
     var nudgesUnanswered = 0;
     var reconnectAsked = false;
+    var loggedMicStarved = false;
     var lastUserVoiceAt = DateTime.now();
     var agentFinishedAt = DateTime.now();
 
@@ -634,6 +642,24 @@ class QuestController {
         }
         return;
       }
+      // Мікрофон мав би слухати, а даних від нього немає (Bluetooth-канал
+      // упав, потік закрився) — це НЕ «люди мовчать». Смикати модель
+      // службовими сигналами марно: вона нічого й не могла почути. Пайплайн
+      // сам перезапускає захоплення (сторож мікрофона); тут лише пишемо раз
+      // у журнал і відкладаємо відлік очікування відповіді.
+      if (audio.micStarved) {
+        if (!loggedMicStarved) {
+          loggedMicStarved = true;
+          _say(
+            'system',
+            'Люди «мовчать», але мікрофон не віддає даних — це не тиша, а '
+            'мертвий потік; чекаю, поки сторож перезапустить мікрофон.',
+          );
+        }
+        lastNudgeAt = DateTime.now();
+        return;
+      }
+      loggedMicStarved = false;
       // Час очікування відповіді: персонаж договорив, люди мовчать довше за
       // answerWaitS — просимо його продовжити самому.
       final waitS = character.answerWaitS;

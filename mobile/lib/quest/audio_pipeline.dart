@@ -42,6 +42,86 @@ class AudioPipeline {
   final _stopwatch = Stopwatch();
   Future<void> _micOpChain = Future<void>.value();
 
+  // ── Сторож мікрофона ────────────────────────────────────────────────────
+  // Потік із мікрофона (плагін `record` → AudioRecord) може мовчки померти:
+  // Bluetooth-канал гарнітури впав чи перемкнувся, AudioRecord повернув
+  // помилку, потік закрився. Зовні це виглядало як «персонаж перестав чути
+  // гравців»: обробник `listen` без onError/onDone просто переставав
+  // отримувати шматки, _recorderRunning лишався true, і нічого не
+  // перезапускало захоплення — доки персонаж знову не заговорить (а він не
+  // заговорить, бо нікого не чує). Живий мікрофон віддає шматки БЕЗПЕРЕРВНО,
+  // навіть у повній тиші, тож «немає жодного шматка кілька секунд» = потік
+  // мертвий. Сторож раз на секунду перевіряє це й перезапускає захоплення
+  // (для Bluetooth — разом із голосовим каналом).
+  double _lastMicChunkAt = 0;
+  double _micStartedAt = 0;
+  bool _micStreamEnded = false;
+  Timer? _micWatchdog;
+  int _micRestarts = 0;
+  double _lastMicRestartAt = -1e9;
+  bool _micRestarting = false;
+
+  /// Скільки секунд без жодного шматка з мікрофона вважаємо потік мертвим.
+  static const micStarvationS = 3.0;
+
+  /// Не частіше за це перезапускаємо захоплення.
+  static const _micRestartCooldownS = 5.0;
+
+  /// Мікрофон мав би слухати (не заглушений, захоплення «йде»), але даних
+  /// від нього немає вже [micStarvationS] — контролер квесту за цим не
+  /// рахує «люди мовчать» і не смикає модель, поки сторож перезапускає
+  /// мікрофон.
+  bool get micStarved {
+    if (!_opened || _muted || !_recorderRunning) return false;
+    final now = _now;
+    if (now - _micStartedAt < micStarvationS) return false;
+    return _micStreamEnded || now - _lastMicChunkAt >= micStarvationS;
+  }
+
+  /// Скільки разів за цей квест сторож перезапускав мікрофон (для журналу).
+  int get micRestarts => _micRestarts;
+
+  Future<void> _checkMicAlive() async {
+    if (_micRestarting || !micStarved) return;
+    final now = _now;
+    if (now - _lastMicRestartAt < _micRestartCooldownS) return;
+    _micRestarting = true;
+    _lastMicRestartAt = now;
+    _micRestarts++;
+    final silentFor = (now - _lastMicChunkAt).toStringAsFixed(0);
+    _diagCtrl.add(
+      '⚠️ Мікрофон не віддає даних уже $silentFor с'
+      '${_micStreamEnded ? ' (потік закрився)' : ''} — перезапускаю '
+      'захоплення (№$_micRestarts за квест).',
+    );
+    try {
+      await _queueMicOp(_stopRecorderStream);
+      if (_voicePlayback) {
+        // Bluetooth: найімовірніша причина — впав голосовий канал (SCO).
+        // Перепіднімаємо його, а не лише AudioRecord.
+        await _deviceService.stopSco();
+        final ok = await _deviceService.startSco();
+        _diagCtrl.add(
+          ok
+              ? 'Bluetooth-гарнітура: голосовий канал піднято знову.'
+              : 'Bluetooth-гарнітура: голосовий канал не піднявся — слухаю '
+                    'через те, що дає система.',
+        );
+        if (ok) await Future<void>.delayed(AudioDeviceService.scoSettleDelay);
+      }
+      // Поки перезапускались, персонаж міг заговорити (мікрофон заглушено)
+      // або квест закінчитись — тоді стартувати не треба: розблокування
+      // після репліки саме запустить захоплення.
+      if (_opened && !_muted) {
+        await _queueMicOp(_startRecorderStream);
+      }
+    } catch (e) {
+      _diagCtrl.add('Не вдалося перезапустити мікрофон: $e');
+    } finally {
+      _micRestarting = false;
+    }
+  }
+
   int? _inputSampleRate;
   void Function(Uint8List pcm16)? _onMic;
   AudioDevice? _resolvedInputDevice;
@@ -170,7 +250,30 @@ class AudioPipeline {
         ),
       ),
     );
-    _micSub = micStream.listen((data) => _onMic?.call(data));
+    _micStartedAt = _now;
+    _lastMicChunkAt = _now;
+    _micStreamEnded = false;
+    _micSub = micStream.listen(
+      (data) {
+        _lastMicChunkAt = _now;
+        _onMic?.call(data);
+      },
+      // Раніше помилка чи закриття потоку проходили НЕПОМІЧЕНИМИ: мікрофон
+      // «працював» (за прапорцем), а шматків більше не було — і персонаж
+      // переставав чути гравців до кінця квесту. Тепер це видно в журналі,
+      // а сторож (_checkMicAlive) перезапускає захоплення.
+      onError: (Object e) {
+        _micStreamEnded = true;
+        _diagCtrl.add('⚠️ Потік мікрофона впав: $e');
+      },
+      onDone: () {
+        if (_recorderRunning) {
+          _micStreamEnded = true;
+          _diagCtrl.add('⚠️ Потік мікрофона закрився сам.');
+        }
+      },
+      cancelOnError: true,
+    );
   }
 
   String _bucketLabel(String bucket) {
@@ -336,6 +439,13 @@ class AudioPipeline {
     _pendingChunks.clear();
     _inputSampleRate = inputSampleRate;
     _onMic = onMic;
+    _micRestarts = 0;
+    _lastMicRestartAt = -1e9;
+    _micStreamEnded = false;
+    _micWatchdog?.cancel();
+    _micWatchdog = Timer.periodic(const Duration(seconds: 1), (_) {
+      unawaited(_checkMicAlive());
+    });
 
     await _resolveAudioDevices();
     await _deviceChangeSub?.cancel();
@@ -495,6 +605,8 @@ class AudioPipeline {
   /// отримав (до кількох секунд), щоб фінальна репліка не обірвалась.
   /// false — негайна зупинка (кнопка «Зупинити», помилка).
   Future<void> stop({bool drain = false}) async {
+    _micWatchdog?.cancel();
+    _micWatchdog = null;
     _unmuteTimer?.cancel();
     _unmuteTimer = null;
     _unmuteGen++;

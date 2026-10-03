@@ -121,6 +121,16 @@ class WakeGateService {
     var lastPartial = '';
     var lastFinalAt = DateTime.now();
     var currentDevice = await _resolveInputDevice();
+    // Сторож потоку: живий мікрофон віддає шматки безперервно, навіть у
+    // тиші. Немає жодного кілька секунд (чи потік закрився/впав) — він
+    // мертвий, і без перезапуску термінал «глухий», хоч на екрані й
+    // «слухаю». Та сама вада, що в мікрофоні квесту (див. AudioPipeline).
+    var lastChunkAt = DateTime.now();
+    var streamStartedAt = DateTime.now();
+    var streamEnded = false;
+    var lastStreamRestartAt = DateTime.fromMillisecondsSinceEpoch(0);
+    var restarting = false;
+    var streamRestarts = 0;
 
     Future<void> startStream() async {
       final device = currentDevice;
@@ -155,8 +165,12 @@ class WakeGateService {
           androidConfig: const AndroidRecordConfig(manageBluetooth: true),
         ),
       );
+      streamStartedAt = DateTime.now();
+      lastChunkAt = streamStartedAt;
+      streamEnded = false;
       sub = stream.listen((chunk) async {
         if (completer.isCompleted) return;
+        lastChunkAt = DateTime.now();
         try {
           final ready = await recognizer.acceptWaveformBytes(chunk);
           final raw = ready
@@ -203,10 +217,65 @@ class WakeGateService {
             );
           }
         }
-      });
+      }, onError: (Object e) {
+        streamEnded = true;
+        _diagCtrl.add('⚠️ Потік мікрофона впав: $e');
+      }, onDone: () {
+        if (!completer.isCompleted) {
+          streamEnded = true;
+          _diagCtrl.add('⚠️ Потік мікрофона закрився сам.');
+        }
+      }, cancelOnError: true);
+    }
+
+    /// Зупинити поточний потік і запустити заново (поточний пристрій).
+    /// Збій перезапуску віддаємо контролеру — він перезапустить слухання
+    /// після паузи (раніше виняток в асинхронному слухачі лишав очікування
+    /// без мікрофона назавжди).
+    Future<void> restartStream(String why) async {
+      await sub?.cancel();
+      sub = null;
+      try {
+        await _recorder.stop();
+      } catch (_) {}
+      if (completer.isCompleted) return;
+      try {
+        await startStream();
+      } catch (e) {
+        _diagCtrl.add('Не вдалося перезапустити мікрофон ($why): $e');
+        if (!completer.isCompleted) {
+          completer.completeError(Exception('Мікрофон після перезапуску: $e'));
+        }
+      }
     }
 
     await startStream();
+
+    final starvationTimer = Timer.periodic(const Duration(seconds: 1), (
+      _,
+    ) async {
+      if (completer.isCompleted || restarting) return;
+      final now = DateTime.now();
+      if (now.difference(streamStartedAt).inSeconds < _starvationS) return;
+      final silentFor = now.difference(lastChunkAt).inSeconds;
+      if (!streamEnded && silentFor < _starvationS) return;
+      if (now.difference(lastStreamRestartAt).inSeconds < _restartCooldownS) {
+        return;
+      }
+      restarting = true;
+      lastStreamRestartAt = now;
+      streamRestarts++;
+      _diagCtrl.add(
+        '⚠️ Мікрофон не віддає даних уже $silentFor с'
+        '${streamEnded ? ' (потік закрився)' : ''} — перезапускаю '
+        'слухання (№$streamRestarts).',
+      );
+      try {
+        await restartStream('мертвий потік');
+      } finally {
+        restarting = false;
+      }
+    });
 
     // Поки чекаємо кодове слово (могло бути й довго), реагуємо на
     // під'єднання/від'єднання пристроїв: якщо найкращий доступний мікрофон
@@ -231,24 +300,7 @@ class WakeGateService {
         if (stillThere != null) return;
       }
       currentDevice = newDevice;
-      await sub?.cancel();
-      try {
-        await _recorder.stop();
-      } catch (_) {}
-      if (completer.isCompleted) return;
-      try {
-        await startStream();
-      } catch (e) {
-        // Раніше збій тут лишав очікування без мікрофона НАЗАВЖДИ (виняток
-        // в асинхронному слухачі нікуди не потрапляв). Віддаємо помилку
-        // контролеру — він перезапустить слухання після паузи.
-        _diagCtrl.add('Не вдалося перезапустити мікрофон: $e');
-        if (!completer.isCompleted) {
-          completer.completeError(
-            Exception('Мікрофон після зміни пристрою: $e'),
-          );
-        }
-      }
+      await restartStream('зміна пристрою');
     });
 
     final stopTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
@@ -260,6 +312,7 @@ class WakeGateService {
       return result;
     } finally {
       stopTimer.cancel();
+      starvationTimer.cancel();
       await deviceChangeSub.cancel();
       await sub?.cancel();
       try {
@@ -267,6 +320,11 @@ class WakeGateService {
       } catch (_) {}
     }
   }
+
+  /// Скільки секунд без жодного шматка з мікрофона вважаємо потік мертвим і
+  /// не частіше за скільки його перезапускаємо.
+  static const _starvationS = 3;
+  static const _restartCooldownS = 5;
 
   /// Скільки без жодного «кінця фрази» від розпізнавача терпимо, перш ніж
   /// скинути його (див. коментар у слухачі). Кодове слово вимовляється за
