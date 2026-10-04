@@ -16,6 +16,15 @@ class QuestActivity {
   static bool running = false;
   static String? characterName;
 
+  /// Відкрито екран квесту (від першого кадру, ще до дозволів і старту
+  /// циклу — [running] стає true лише після цього). Поки так, перевірка
+  /// терміну дії не втручається (див. ExpiryGate).
+  static bool screenOpen = false;
+
+  /// Квест іде або екран квесту відкрито — нічого не перевіряємо й не
+  /// перериваємо.
+  static bool get active => running || screenOpen;
+
   static void started(String character) {
     running = true;
     characterName = character;

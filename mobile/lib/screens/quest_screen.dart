@@ -41,6 +41,9 @@ class _QuestScreenState extends State<QuestScreen> {
   @override
   void initState() {
     super.initState();
+    // З першого кадру екрана квесту перевірка терміну дії не втручається
+    // (діалоги дозволів теж «згортають» застосунок).
+    QuestActivity.screenOpen = true;
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
   }
 
@@ -155,6 +158,7 @@ class _QuestScreenState extends State<QuestScreen> {
 
   @override
   void dispose() {
+    QuestActivity.screenOpen = false;
     QuestActivity.stopped();
     StatusReporter.instance.reportNow();
     RemoteCommands.instance.stop();
